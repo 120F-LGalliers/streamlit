@@ -146,7 +146,7 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
         "Year to date",
         f"{ytd} / {ytd_target}",
         delta=f"{ytd - ytd_target:+d} vs target",
-        delta_color="normal" if ytd >= ytd_target else "inverse",
+        delta_color="normal",
     )
 
     # Monthly bar chart
