@@ -140,7 +140,7 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
         f"This month ({month_label})",
         f"{current} / {target}",
         delta=f"{current - target:+d} vs target",
-        delta_color="normal" if current >= target else "inverse",
+        delta_color="normal",
     )
     c2.metric(
         "Year to date",
