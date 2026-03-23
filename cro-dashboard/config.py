@@ -4,7 +4,7 @@ CLIENTS = {
     "TSB": {
         "harvest_project_id": 46831914,
         "pm_tool": "trello",
-        "velocity_target_per_month": 6,
+        "velocity_target_per_month": 5,
         "icon": "🏦",
     },
     "Dominos": {
@@ -22,7 +22,7 @@ CLIENTS = {
     "Avis": {
         "harvest_project_id": 47029297,
         "pm_tool": "jira_avis",
-        "velocity_target_per_month": 2,
+        "velocity_target_per_month": 8,
         "icon": "🚗",
     },
 }
