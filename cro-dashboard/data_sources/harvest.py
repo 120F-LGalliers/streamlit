@@ -79,6 +79,7 @@ def get_harvest_data(project_id: int, account_id: str, access_token: str) -> dic
 
     # Aggregate hours
     billable: dict[str, float] = {}
+    billable_tasks: dict[str, dict[str, float]] = {}  # group -> {task_name: hours}
     non_billable: dict[str, float] = {}
     total_hours = 0.0
     total_billable = 0.0
@@ -86,6 +87,7 @@ def get_harvest_data(project_id: int, account_id: str, access_token: str) -> dic
     for entry in all_entries:
         user_name = entry["user"]["name"]
         task_id = entry["task"]["id"]
+        task_name = entry["task"]["name"]
         hours = entry["hours"]
         total_hours += hours
 
@@ -96,6 +98,11 @@ def get_harvest_data(project_id: int, account_id: str, access_token: str) -> dic
         if entry["billable"]:
             total_billable += hours
             billable[task_group] = billable.get(task_group, 0.0) + hours
+            if task_group not in billable_tasks:
+                billable_tasks[task_group] = {}
+            billable_tasks[task_group][task_name] = (
+                billable_tasks[task_group].get(task_name, 0.0) + hours
+            )
         else:
             non_billable[task_group] = non_billable.get(task_group, 0.0) + hours
 
@@ -109,6 +116,11 @@ def get_harvest_data(project_id: int, account_id: str, access_token: str) -> dic
         utilization = (hours / budgeted * 100) if budgeted > 0 else 0.0
         remaining = budgeted - hours
 
+        # Sort tasks within this group by hours descending
+        tasks = dict(
+            sorted(billable_tasks.get(group, {}).items(), key=lambda x: x[1], reverse=True)
+        )
+
         task_groups_data.append({
             "group": group,
             "hours": hours,
@@ -116,6 +128,7 @@ def get_harvest_data(project_id: int, account_id: str, access_token: str) -> dic
             "utilization": utilization,
             "remaining": remaining,
             "status": _get_burn_status(utilization, month_progress),
+            "tasks": tasks,
         })
 
     return {
