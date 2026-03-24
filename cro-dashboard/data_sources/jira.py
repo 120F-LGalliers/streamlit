@@ -100,7 +100,7 @@ def _fetch_via_jql(jira_url: str, auth: HTTPBasicAuth, epic: str, current_year: 
     return []
 
 
-def _fetch_via_agile_board(jira_url: str, auth: HTTPBasicAuth, board_id) -> list[dict]:
+def _fetch_via_agile_board(jira_url: str, auth: HTTPBasicAuth, board_id, label_filter: Optional[str] = None) -> list[dict]:
     """GET-based agile board endpoint — used for Avis."""
     search_url = f"{jira_url}/rest/agile/1.0/board/{board_id}/issue"
     all_issues: list[dict] = []
@@ -112,8 +112,11 @@ def _fetch_via_agile_board(jira_url: str, auth: HTTPBasicAuth, board_id) -> list
             "startAt": start_at,
             "maxResults": max_results,
             "expand": "changelog",
-            "fields": "summary,status,issuetype",
+            "fields": "summary,status,issuetype,labels",
         }
+        if label_filter:
+            params["jql"] = f'labels = "{label_filter}"'
+
         resp = requests.get(search_url, auth=auth, params=params, timeout=30)
         if resp.status_code != 200:
             break
@@ -121,7 +124,6 @@ def _fetch_via_agile_board(jira_url: str, auth: HTTPBasicAuth, board_id) -> list
         data = resp.json()
         issues = data.get("issues", [])
 
-        # Agile board returns all issue types — keep only Stories
         stories = [
             i for i in issues
             if i.get("fields", {}).get("issuetype", {}).get("name", "").lower() == "story"
@@ -149,6 +151,7 @@ def get_jira_velocity(
     target_per_month: int,
     mode: str,          # "jql" | "agile"
     epic: Optional[str],
+    label_filter: Optional[str] = None,
 ) -> dict:
     """
     Unified Jira velocity fetcher.
@@ -164,7 +167,7 @@ def get_jira_velocity(
     tickets = (
         _fetch_via_jql(jira_url, auth, epic, current_year)
         if mode == "jql"
-        else _fetch_via_agile_board(jira_url, auth, board_id)
+        else _fetch_via_agile_board(jira_url, auth, board_id, label_filter)
     )
 
     # month → list of (key, summary)
