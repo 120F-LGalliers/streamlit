@@ -64,6 +64,7 @@ JIRA_TESCO_TARGET_COLUMN = "Ready to Publish"
 # Jira — Avis
 JIRA_AVIS_BOARD_ID      = 5025        # agile board ID — update if it changes
 JIRA_AVIS_TARGET_COLUMN = "In Testing"
+JIRA_AVIS_LABEL_FILTER = "120Feet"
 
 # Trello — TSB
 TRELLO_TARGET_COLUMNS = ["Ready to Launch", "Full Launch"]
