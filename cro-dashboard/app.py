@@ -230,6 +230,7 @@ def load_client_data(client_name: str, cfg: dict) -> tuple:
                 target_per_month=cfg["velocity_target_per_month"],
                 mode="agile",
                 epic=None,
+                label_filter=config.JIRA_AVIS_LABEL_FILTER,
             )
     except Exception as exc:
         st.error(f"Could not load velocity data: {exc}")
