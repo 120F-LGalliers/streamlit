@@ -160,11 +160,12 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
             text=df["count"],
             textposition="outside",
         ))
+        max_count = int(df["count"].max()) if not df.empty else target
         fig.update_layout(
-            height=230,
+            height=260,
             margin=dict(l=0, r=50, t=10, b=0),
             showlegend=False,
-            yaxis=dict(title="Experiments", gridcolor="#f1f5f9"),
+            yaxis=dict(title="Experiments", gridcolor="#f1f5f9", range=[0, max(max_count, target) * 1.25],),
             xaxis=dict(title=""),
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
