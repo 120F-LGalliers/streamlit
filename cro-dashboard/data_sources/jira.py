@@ -202,5 +202,13 @@ def get_jira_velocity(
         "ytd_target": ytd_target,
         "monthly_data": monthly_data,
         "current_month_items": current_items,
+        "all_month_items": {
+            MONTHS_ORDER[i]: [
+                f"{key} — {summary}"
+                for key, summary in moved_to_target.get(MONTHS_ORDER[i], [])
+            ]
+            for i in range(current_month_idx)
+            if moved_to_target.get(MONTHS_ORDER[i])
+        },
         "status": _velocity_status(current_count, target_per_month),
     }
