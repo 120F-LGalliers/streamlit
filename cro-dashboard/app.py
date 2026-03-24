@@ -180,6 +180,15 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
     else:
         st.caption("No experiments have hit the target column yet this month.")
 
+    all_month_items = velocity_data.get("all_month_items", {})
+    if all_month_items:
+        with st.expander("Full year breakdown by month"):
+            for month, month_items in all_month_items.items():
+                st.markdown(f"**{month}** — {len(month_items)} experiment{'s' if len(month_items) != 1 else ''}")
+                for item in month_items:
+                    st.write(f"• {item}")
+                st.divider()
+
 
 def load_client_data(client_name: str, cfg: dict) -> tuple:
     try:
