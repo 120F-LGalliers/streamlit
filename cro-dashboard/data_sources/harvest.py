@@ -7,8 +7,8 @@ from config import TASK_GROUPS, TEAM_MEMBERS, PROJECT_BUDGETS
 BASE_URL = "https://api.harvestapp.com/v2"
 
 
-def _calculate_month_progress() -> float:
-    """Return how far through the current month we are, based on working days."""
+def _get_working_day_stats() -> dict:
+    """Return working day counts and month progress percentage."""
     today = datetime.date.today()
     first_day = today.replace(day=1)
 
@@ -20,16 +20,22 @@ def _calculate_month_progress() -> float:
     total_days = (first_day_next - first_day).days
     weekdays = {0, 1, 2, 3, 4}
 
-    weekdays_in_month = sum(
+    total_working = sum(
         1 for d in range(total_days)
         if (first_day + datetime.timedelta(days=d)).weekday() in weekdays
     )
-    weekdays_passed = sum(
+    elapsed = sum(
         1 for d in range(today.day)
         if (first_day + datetime.timedelta(days=d)).weekday() in weekdays
     )
+    remaining = total_working - elapsed
 
-    return (weekdays_passed / weekdays_in_month * 100) if weekdays_in_month > 0 else 0.0
+    return {
+        "total": total_working,
+        "elapsed": elapsed,
+        "remaining": remaining,
+        "progress_pct": (elapsed / total_working * 100) if total_working > 0 else 0.0,
+    }
 
 
 def _get_burn_status(utilization_pct: float, month_progress: float) -> str:
@@ -42,10 +48,6 @@ def _get_burn_status(utilization_pct: float, month_progress: float) -> str:
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_harvest_data(project_id: int, account_id: str, access_token: str) -> dict:
-    """
-    Fetch and process all time entries for the current month for a given project.
-    Returns structured data ready for the dashboard to render.
-    """
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Harvest-Account-Id": account_id,
@@ -77,9 +79,8 @@ def get_harvest_data(project_id: int, account_id: str, access_token: str) -> dic
             break
         page += 1
 
-    # Aggregate hours
     billable: dict[str, float] = {}
-    billable_tasks: dict[str, dict[str, float]] = {}  # group -> {task_name: hours}
+    billable_tasks: dict[str, dict[str, float]] = {}
     non_billable: dict[str, float] = {}
     total_hours = 0.0
     total_billable = 0.0
@@ -106,7 +107,8 @@ def get_harvest_data(project_id: int, account_id: str, access_token: str) -> dic
         else:
             non_billable[task_group] = non_billable.get(task_group, 0.0) + hours
 
-    month_progress = _calculate_month_progress()
+    wd = _get_working_day_stats()
+    month_progress = wd["progress_pct"]
     budget = PROJECT_BUDGETS.get(project_id, {})
 
     task_groups_data = []
@@ -116,7 +118,11 @@ def get_harvest_data(project_id: int, account_id: str, access_token: str) -> dic
         utilization = (hours / budgeted * 100) if budgeted > 0 else 0.0
         remaining = budgeted - hours
 
-        # Sort tasks within this group by hours descending
+        daily_rate = (hours / wd["elapsed"]) if wd["elapsed"] > 0 else 0.0
+        projected = round(daily_rate * wd["total"], 1)
+        projected_delta = round(projected - budgeted, 1)
+        required_daily_rate = (max(remaining, 0) / wd["remaining"]) if wd["remaining"] > 0 else 0.0
+
         tasks = dict(
             sorted(billable_tasks.get(group, {}).items(), key=lambda x: x[1], reverse=True)
         )
@@ -129,6 +135,10 @@ def get_harvest_data(project_id: int, account_id: str, access_token: str) -> dic
             "remaining": remaining,
             "status": _get_burn_status(utilization, month_progress),
             "tasks": tasks,
+            "daily_rate": round(daily_rate, 2),
+            "projected": projected,
+            "projected_delta": projected_delta,
+            "required_daily_rate": round(required_daily_rate, 2),
         })
 
     return {
