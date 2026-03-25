@@ -260,6 +260,22 @@ def get_monday_velocity(api_key: str, board_id: str, target_per_month: int) -> d
         if any(atype == MONDAY_AB_TYPE_LABEL for atype in pids_map.values())
     }
 
+    # Other work: grouped by activity type for current month and full year
+    _other_this_month: dict[str, list[str]] = defaultdict(list)
+    for pid, atype in current_items_map.items():
+        if atype != MONDAY_AB_TYPE_LABEL:
+            _other_this_month[atype].append(item_data.get(pid, {}).get("name", f"Item {pid}"))
+    current_month_other_items = {k: sorted(v) for k, v in sorted(_other_this_month.items())}
+
+    all_month_other_items: dict[str, dict[str, list[str]]] = {}
+    for month, pids_map in moved_to_target.items():
+        _other: dict[str, list[str]] = defaultdict(list)
+        for pid, atype in pids_map.items():
+            if atype != MONDAY_AB_TYPE_LABEL:
+                _other[atype].append(item_data.get(pid, {}).get("name", f"Item {pid}"))
+        if _other:
+            all_month_other_items[month] = {k: sorted(v) for k, v in sorted(_other.items())}
+
     return {
         "current_month_count": current_ab_count,
         "target_per_month": target_per_month,
@@ -268,6 +284,8 @@ def get_monday_velocity(api_key: str, board_id: str, target_per_month: int) -> d
         "monthly_data": monthly_data,
         "current_month_items": current_items,
         "all_month_items": all_month_items,
+        "current_month_other_items": current_month_other_items,
+        "all_month_other_items": all_month_other_items,
         "activity_type_breakdown": activity_type_breakdown,
         "status": _velocity_status(current_ab_count, target_per_month),
     }
