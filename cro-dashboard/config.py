@@ -71,3 +71,5 @@ TRELLO_TARGET_COLUMNS = ["Ready to Launch", "Full Launch"]
 
 # Monday.com — Dominos
 MONDAY_TARGET_STATUSES = ["Ready to Publish", "Next Live"]
+MONDAY_ACTIVITY_TYPE_COLUMN_TITLE = "Activity Type"  # exact column title in the Monday board
+MONDAY_AB_TYPE_LABEL = "A/B"                          # exact label text for A/B tests
