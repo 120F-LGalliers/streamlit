@@ -142,22 +142,39 @@ def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
                     )
 
 
+_MONTH_ABB_TO_FULL = {m[:3]: m for m in [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+]}
+
+# Categorical palette for non-A/B activity types
+_TYPE_COLORS = [
+    "#475569", "#64748b", "#7c3aed", "#b45309", "#0369a1",
+    "#be123c", "#065f46", "#92400e", "#1e3a5f",
+]
+
+
 def render_velocity(velocity_data: dict, client_name: str) -> None:
     current = velocity_data["current_month_count"]
     target = velocity_data["target_per_month"]
     ytd = velocity_data["ytd_count"]
     ytd_target = velocity_data["ytd_target"]
     month_label = datetime.date.today().strftime("%b")
+    current_month_full = datetime.date.today().strftime("%B")
 
+    activity_breakdown = velocity_data.get("activity_type_breakdown", {})
+    has_breakdown = bool(activity_breakdown)
+
+    # Metrics — counts are always A/B only when breakdown is present
     c1, c2 = st.columns(2)
     c1.metric(
-        f"This month ({month_label})",
+        f"A/B tests ({month_label})" if has_breakdown else f"This month ({month_label})",
         f"{current} / {target}",
         delta=f"{current - target:+d} vs target",
         delta_color="normal",
     )
     c2.metric(
-        "Year to date",
+        "A/B YTD" if has_breakdown else "Year to date",
         f"{ytd} / {ytd_target}",
         delta=f"{ytd - ytd_target:+d} vs target",
         delta_color="normal",
@@ -166,56 +183,130 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
     monthly = velocity_data.get("monthly_data", [])
     if monthly:
         df = pd.DataFrame(monthly)
-        bar_colors = [
-            "#10b981" if row["count"] >= row["target"] else "#ef4444"
-            for _, row in df.iterrows()
-        ]
-        max_count = int(df["count"].max()) if not df.empty else target
+        ab_counts = df["count"].tolist()
+        ab_colors = ["#10b981" if c >= target else "#ef4444" for c in ab_counts]
 
         fig = go.Figure()
         fig.add_hline(
             y=target,
             line_dash="dash",
             line_color="#94a3b8",
-            annotation_text=f"Target ({target})",
+            annotation_text=f"A/B target ({target})" if has_breakdown else f"Target ({target})",
             annotation_position="top right",
             annotation_font_size=11,
         )
-        fig.add_trace(go.Bar(
-            x=df["month"],
-            y=df["count"],
-            marker_color=bar_colors,
-            text=df["count"],
-            textposition="outside",
-        ))
+
+        if has_breakdown:
+            # Stacked bar: A/B (primary) + other work (muted) on top
+            other_counts = []
+            for row in df.itertuples():
+                full = _MONTH_ABB_TO_FULL.get(row.month, row.month)
+                total = sum(activity_breakdown.get(full, {}).values())
+                other_counts.append(max(0, total - row.count))
+
+            fig.add_trace(go.Bar(
+                name="A/B tests",
+                x=df["month"],
+                y=ab_counts,
+                marker_color=ab_colors,
+                text=ab_counts,
+                textposition="inside",
+            ))
+            fig.add_trace(go.Bar(
+                name="Other work",
+                x=df["month"],
+                y=other_counts,
+                marker_color="#475569",
+                opacity=0.55,
+                text=[v if v > 0 else "" for v in other_counts],
+                textposition="inside",
+            ))
+            stacked_max = max((a + o) for a, o in zip(ab_counts, other_counts)) if ab_counts else target
+            y_range = [0, max(stacked_max, target) * 1.3]
+            fig.update_layout(barmode="stack", showlegend=True,
+                              legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                          xanchor="right", x=1, font=dict(size=11)))
+        else:
+            fig.add_trace(go.Bar(
+                x=df["month"],
+                y=ab_counts,
+                marker_color=ab_colors,
+                text=ab_counts,
+                textposition="outside",
+            ))
+            max_count = int(df["count"].max()) if not df.empty else target
+            y_range = [0, max(max_count, target) * 1.25]
+            fig.update_layout(showlegend=False)
+
         fig.update_layout(
-            height=260,
+            height=270,
             margin=dict(l=0, r=50, t=10, b=0),
-            showlegend=False,
             yaxis=dict(
-                title="Experiments",
-                gridcolor="#f1f5f9",
-                range=[0, max(max_count, target) * 1.25],
+                title="Items completed",
+                gridcolor="#1e293b",
+                range=y_range,
             ),
             xaxis=dict(title=""),
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
         )
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig, use_container_width=True,
+                        key=f"vel_{client_name}", config={"displayModeBar": False})
+
+    # Current month work-type breakdown (Dominos only / when breakdown exists)
+    if has_breakdown:
+        current_types = activity_breakdown.get(current_month_full, {})
+        if current_types:
+            sorted_types = sorted(current_types.items(), key=lambda x: -x[1])
+            type_labels = [t for t, _ in sorted_types]
+            type_counts_vals = [c for _, c in sorted_types]
+            bar_colors = [
+                "#10b981" if t == config.MONDAY_AB_TYPE_LABEL else _TYPE_COLORS[i % len(_TYPE_COLORS)]
+                for i, t in enumerate(type_labels)
+            ]
+            fig_bd = go.Figure(go.Bar(
+                x=type_counts_vals,
+                y=type_labels,
+                orientation="h",
+                marker_color=bar_colors,
+                text=type_counts_vals,
+                textposition="auto",
+            ))
+            fig_bd.update_layout(
+                height=max(130, len(type_labels) * 32),
+                margin=dict(l=0, r=30, t=0, b=0),
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                showlegend=False,
+                xaxis=dict(visible=False),
+                yaxis=dict(visible=True, autorange="reversed"),
+            )
+            st.caption(f"Work type breakdown — {current_month_full}")
+            st.plotly_chart(fig_bd, use_container_width=True,
+                            key=f"wtype_{client_name}", config={"displayModeBar": False})
 
     items = velocity_data.get("current_month_items", [])
+    label = "A/B tests" if has_breakdown else "experiments"
     if items:
-        with st.expander(f"This month's experiments ({len(items)})"):
+        with st.expander(f"This month's {label} ({len(items)})"):
             for item in items:
                 st.write(f"• {item}")
     else:
-        st.caption("No experiments have hit the target column yet this month.")
+        st.caption(f"No {label} have hit the target column yet this month.")
 
     all_month_items = velocity_data.get("all_month_items", {})
     if all_month_items:
-        with st.expander("Full year breakdown by month"):
+        with st.expander(f"Full year {label} breakdown"):
             for month, month_items in all_month_items.items():
-                st.markdown(f"**{month}** — {len(month_items)} experiment{'s' if len(month_items) != 1 else ''}")
+                # Show work-type totals alongside A/B count when available
+                extra = ""
+                if has_breakdown and month in activity_breakdown:
+                    total_work = sum(activity_breakdown[month].values())
+                    ab_n = len(month_items)
+                    other_n = total_work - ab_n
+                    if other_n > 0:
+                        extra = f" · {other_n} other items"
+                st.markdown(f"**{month}** — {len(month_items)} A/B test{'s' if len(month_items) != 1 else ''}{extra}")
                 for item in month_items:
                     st.write(f"• {item}")
                 st.divider()
