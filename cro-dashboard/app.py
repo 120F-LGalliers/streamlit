@@ -298,18 +298,39 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
     if all_month_items:
         with st.expander(f"Full year {label} breakdown"):
             for month, month_items in all_month_items.items():
-                # Show work-type totals alongside A/B count when available
                 extra = ""
                 if has_breakdown and month in activity_breakdown:
                     total_work = sum(activity_breakdown[month].values())
-                    ab_n = len(month_items)
-                    other_n = total_work - ab_n
+                    other_n = total_work - len(month_items)
                     if other_n > 0:
                         extra = f" · {other_n} other items"
                 st.markdown(f"**{month}** — {len(month_items)} A/B test{'s' if len(month_items) != 1 else ''}{extra}")
                 for item in month_items:
                     st.write(f"• {item}")
                 st.divider()
+
+    if has_breakdown:
+        other_this_month = velocity_data.get("current_month_other_items", {})
+        if other_this_month:
+            total_other = sum(len(v) for v in other_this_month.values())
+            with st.expander(f"This month's other work ({total_other})"):
+                for wtype, names in other_this_month.items():
+                    st.markdown(f"**{wtype}** — {len(names)}")
+                    for name in names:
+                        st.write(f"• {name}")
+
+        all_other = velocity_data.get("all_month_other_items", {})
+        if all_other:
+            with st.expander("Full year other work breakdown"):
+                for month, types in all_other.items():
+                    total = sum(len(v) for v in types.values())
+                    st.markdown(f"**{month}** — {total} item{'s' if total != 1 else ''}")
+                    for wtype, names in types.items():
+                        st.markdown(f"&nbsp;&nbsp;*{wtype}* ({len(names)})",
+                                    unsafe_allow_html=True)
+                        for name in names:
+                            st.write(f"&nbsp;&nbsp;&nbsp;&nbsp;• {name}")
+                    st.divider()
 
 
 def load_client_data(client_name: str, cfg: dict) -> tuple:
