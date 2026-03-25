@@ -4,7 +4,7 @@ CLIENTS = {
     "TSB": {
         "harvest_project_id": 46831914,
         "pm_tool": "trello",
-        "velocity_target_per_month": 5,
+        "velocity_target_per_month": 6,
         "icon": "🏦",
     },
     "Dominos": {
@@ -22,7 +22,7 @@ CLIENTS = {
     "Avis": {
         "harvest_project_id": 47029297,
         "pm_tool": "jira_avis",
-        "velocity_target_per_month": 8,
+        "velocity_target_per_month": 2,
         "icon": "🚗",
     },
 }
@@ -62,9 +62,9 @@ JIRA_TESCO_TARGET_EPIC   = "EAOA-260"
 JIRA_TESCO_TARGET_COLUMN = "Ready to Publish"
 
 # Jira — Avis
-JIRA_AVIS_BOARD_ID      = 5025        # agile board ID — update if it changes
-JIRA_AVIS_TARGET_COLUMN = "In Testing"
-JIRA_AVIS_LABEL_FILTER = "120Feet"
+JIRA_AVIS_BOARD_ID      = 328        # agile board ID — update if it changes
+JIRA_AVIS_TARGET_COLUMN = "in testing"
+JIRA_AVIS_LABEL_FILTER  = "120Feet"  # only count stories with this label
 
 # Trello — TSB
 TRELLO_TARGET_COLUMNS = ["Ready to Launch", "Full Launch"]
