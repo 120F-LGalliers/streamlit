@@ -62,7 +62,7 @@ JIRA_TESCO_TARGET_EPIC   = "EAOA-260"
 JIRA_TESCO_TARGET_COLUMN = "Ready to Publish"
 
 # Jira — Avis
-JIRA_AVIS_BOARD_ID      = 328        # agile board ID — update if it changes
+JIRA_AVIS_BOARD_ID      = 5025        # agile board ID — update if it changes
 JIRA_AVIS_TARGET_COLUMN = "in testing"
 JIRA_AVIS_LABEL_FILTER  = "120Feet"  # only count stories with this label
 
