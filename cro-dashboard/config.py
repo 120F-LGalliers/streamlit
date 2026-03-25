@@ -20,7 +20,7 @@ CLIENTS = {
         "icon": "📱",
     },
     "Avis": {
-        "harvest_project_id": 47029297,
+        "harvest_project_ids": [47029297, 47725794],  # two Harvest projects, combined view
         "pm_tool": "jira_avis",
         "velocity_target_per_month": 2,
         "icon": "🚗",
@@ -54,7 +54,14 @@ PROJECT_BUDGETS = {
     46647068: {"Analysis": 97,    "CRO/PM/BA": 88,     "Dev": 165,  "QA": 100, "Design": 100, "Workshop": 16.7},  # Tesco Mobile
     46831914: {"Analysis": 31.6,  "CRO/PM/BA": 41.4,   "Dev": 54.2, "QA": 27},                                   # TSB
     46954668: {"Analysis": 26.25, "CRO/PM/BA": 49.275,  "Dev": 63.75,"QA": 22.5},                                 # Dominos
-    47029297: {"CRO/PM/BA": 33,   "Dev": 83,            "QA": 50},                                                 # Avis
+    47029297: {"CRO/PM/BA": 33,   "Dev": 83,            "QA": 50},                                                 # Avis (project 1)
+    47725794: {"CRO/PM/BA": 33,   "Dev": 83,            "QA": 50},                                                 # Avis (project 2)
+}
+
+# Harvest — human-readable labels for individual project IDs (used in multi-project breakdowns)
+PROJECT_LABELS = {
+    47029297: "Avis Project 1",   # update with actual Harvest project names
+    47725794: "Avis Project 2",
 }
 
 # Jira — Tesco Mobile
@@ -62,7 +69,7 @@ JIRA_TESCO_TARGET_EPIC   = "EAOA-260"
 JIRA_TESCO_TARGET_COLUMN = "Ready to Publish"
 
 # Jira — Avis
-JIRA_AVIS_BOARD_ID      = 5025        # agile board ID — update if it changes
+JIRA_AVIS_BOARD_ID      = 5025       # agile board ID (not used in current JQL mode)
 JIRA_AVIS_TARGET_COLUMN = "in testing"
 JIRA_AVIS_LABEL_FILTER  = "120Feet"  # only count stories with this label
 
