@@ -110,6 +110,12 @@ def get_trello_velocity(api_key: str, token: str, board_id: str, target_per_mont
     current_count = len(moved_to_target.get(current_month, set()))
     ytd_target = target_per_month * current_month_idx
 
+    all_month_items = {
+        month: sorted(cards)
+        for month, cards in moved_to_target.items()
+        if cards
+    }
+
     return {
         "current_month_count": current_count,
         "target_per_month": target_per_month,
@@ -117,10 +123,6 @@ def get_trello_velocity(api_key: str, token: str, board_id: str, target_per_mont
         "ytd_target": ytd_target,
         "monthly_data": monthly_data,
         "current_month_items": sorted(moved_to_target.get(current_month, set())),
-        "all_month_items": {
-            MONTHS_ORDER[i]: sorted(moved_to_target.get(MONTHS_ORDER[i], set()))
-            for i in range(current_month_idx)
-            if moved_to_target.get(MONTHS_ORDER[i])
-        },
+        "all_month_items": all_month_items,
         "status": _velocity_status(current_count, target_per_month),
     }
