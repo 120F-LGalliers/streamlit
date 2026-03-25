@@ -40,7 +40,7 @@ BURN_BAR_COLOR = {
 }
 
 
-def render_hours(harvest_data: dict) -> None:
+def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
     month_progress = harvest_data["month_progress"]
 
     c1, c2, c3 = st.columns(3)
@@ -93,7 +93,12 @@ def render_hours(harvest_data: dict) -> None:
         left, right = st.columns([5, 2])
         with left:
             st.markdown(f"**{icon} {tg['group']}** — {tg['hours']:.1f}h of {tg['budgeted']:.1f}h budgeted")
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(
+                fig,
+                key=f"{key_prefix}_{tg['group']}",
+                use_container_width=True,
+                config={"displayModeBar": False},
+            )
         with right:
             st.markdown("<br>", unsafe_allow_html=True)
             projected = tg.get("projected", 0)
@@ -166,6 +171,7 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
             for _, row in df.iterrows()
         ]
         max_count = int(df["count"].max()) if not df.empty else target
+
         fig = go.Figure()
         fig.add_hline(
             y=target,
@@ -304,7 +310,7 @@ def main() -> None:
             with hours_col:
                 st.subheader("🕐 Hours")
                 if harvest_data:
-                    render_hours(harvest_data)
+                    render_hours(harvest_data, key_prefix=client_name)
                 else:
                     st.warning("Hours data unavailable.")
 
