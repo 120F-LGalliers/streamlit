@@ -165,6 +165,12 @@ def get_monday_velocity(api_key: str, board_id: str, target_per_month: int) -> d
         for pid in moved_to_target.get(current_month, set())
     )
 
+    all_month_items = {
+        month: sorted(pulse_names.get(pid, f"Item {pid}") for pid in pids)
+        for month, pids in moved_to_target.items()
+        if pids
+    }
+
     return {
         "current_month_count": current_count,
         "target_per_month": target_per_month,
@@ -172,13 +178,6 @@ def get_monday_velocity(api_key: str, board_id: str, target_per_month: int) -> d
         "ytd_target": ytd_target,
         "monthly_data": monthly_data,
         "current_month_items": current_items,
-        "all_month_items": {
-            MONTHS_ORDER[i]: sorted(
-                pulse_names.get(pid, f"Item {pid}")
-                for pid in moved_to_target.get(MONTHS_ORDER[i], set())
-            )
-            for i in range(current_month_idx)
-            if moved_to_target.get(MONTHS_ORDER[i])
-        },
+        "all_month_items": all_month_items,
         "status": _velocity_status(current_count, target_per_month),
     }
