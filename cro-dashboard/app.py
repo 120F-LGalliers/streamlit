@@ -60,7 +60,6 @@ def render_hours(harvest_data: dict) -> None:
     for tg in harvest_data["task_groups"]:
         status = tg["status"]
         icon = STATUS_ICON[status]
-        label = STATUS_LABEL[status]
         bar_color = BURN_BAR_COLOR[status]
 
         fig = go.Figure(go.Bar(
@@ -97,12 +96,35 @@ def render_hours(harvest_data: dict) -> None:
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         with right:
             st.markdown("<br>", unsafe_allow_html=True)
-            if tg["remaining"] >= 0:
-                st.caption(f"{tg['remaining']:.1f}h remaining · {label}")
-            else:
-                st.caption(f"{abs(tg['remaining']):.1f}h over budget · {label}")
+            projected = tg.get("projected", 0)
+            proj_delta = tg.get("projected_delta", 0)
+            budgeted = tg["budgeted"]
 
-        # Task breakdown accordion
+            if budgeted > 0:
+                if projected > budgeted * 1.05:
+                    proj_color = "#ef4444"
+                    proj_icon = "🔴"
+                elif projected < budgeted * 0.95:
+                    proj_color = "#f59e0b"
+                    proj_icon = "🟡"
+                else:
+                    proj_color = "#10b981"
+                    proj_icon = "🟢"
+
+                delta_str = (
+                    f"+{proj_delta:.1f}h over budget"
+                    if proj_delta > 0
+                    else f"{abs(proj_delta):.1f}h under budget"
+                )
+                st.markdown(
+                    f"**{proj_icon} Projected: {projected:.1f}h**  \n"
+                    f"<span style='color:{proj_color};font-size:0.85em'>{delta_str}</span>",
+                    unsafe_allow_html=True,
+                )
+                current_rate = tg.get("daily_rate", 0)
+                required_rate = tg.get("required_daily_rate", 0)
+                st.caption(f"Need {required_rate:.1f}h/day · burning {current_rate:.1f}h/day")
+
         tasks = tg.get("tasks", {})
         if tasks:
             with st.expander(f"Task breakdown — {len(tasks)} task type{'s' if len(tasks) != 1 else ''}"):
@@ -143,7 +165,7 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
             "#10b981" if row["count"] >= row["target"] else "#ef4444"
             for _, row in df.iterrows()
         ]
-
+        max_count = int(df["count"].max()) if not df.empty else target
         fig = go.Figure()
         fig.add_hline(
             y=target,
@@ -160,12 +182,15 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
             text=df["count"],
             textposition="outside",
         ))
-        max_count = int(df["count"].max()) if not df.empty else target
         fig.update_layout(
             height=260,
             margin=dict(l=0, r=50, t=10, b=0),
             showlegend=False,
-            yaxis=dict(title="Experiments", gridcolor="#f1f5f9", range=[0, max(max_count, target) * 1.25],),
+            yaxis=dict(
+                title="Experiments",
+                gridcolor="#f1f5f9",
+                range=[0, max(max_count, target) * 1.25],
+            ),
             xaxis=dict(title=""),
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
