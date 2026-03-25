@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import config
-from data_sources.harvest import get_harvest_data
+from data_sources.harvest import get_harvest_data, get_combined_harvest_data
 from data_sources.jira import get_jira_velocity
 from data_sources.monday_com import get_monday_velocity
 from data_sources.trello import get_trello_velocity
@@ -131,8 +131,25 @@ def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
                 st.caption(f"Need {required_rate:.1f}h/day · burning {current_rate:.1f}h/day")
 
         tasks = tg.get("tasks", {})
-        if tasks:
-            with st.expander(f"Task breakdown — {len(tasks)} task type{'s' if len(tasks) != 1 else ''}"):
+        per_project = tg.get("per_project", {})
+        has_split = len(per_project) > 1
+
+        expander_label = f"Task breakdown — {len(tasks)} task type{'s' if len(tasks) != 1 else ''}"
+        if has_split:
+            expander_label += " · project split"
+
+        if tasks or has_split:
+            with st.expander(expander_label):
+                if has_split:
+                    split_parts = []
+                    for pid, proj_hours in per_project.items():
+                        label = config.PROJECT_LABELS.get(pid, f"Project {pid}")
+                        pct = (proj_hours / tg["hours"] * 100) if tg["hours"] > 0 else 0
+                        split_parts.append(f"**{label}**: {proj_hours:.1f}h ({pct:.0f}%)")
+                    st.markdown(" &nbsp;·&nbsp; ".join(split_parts), unsafe_allow_html=True)
+                    if tasks:
+                        st.divider()
+
                 for task_name, task_hours in tasks.items():
                     pct = (task_hours / tg["hours"] * 100) if tg["hours"] > 0 else 0
                     st.markdown(
@@ -335,8 +352,11 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
 
 def load_client_data(client_name: str, cfg: dict) -> tuple:
     try:
-        harvest_data = get_harvest_data(
-            cfg["harvest_project_id"],
+        project_ids = tuple(
+            cfg.get("harvest_project_ids") or [cfg["harvest_project_id"]]
+        )
+        harvest_data = get_combined_harvest_data(
+            project_ids,
             st.secrets["harvest"]["account_id"],
             st.secrets["harvest"]["access_token"],
         )
@@ -377,10 +397,10 @@ def load_client_data(client_name: str, cfg: dict) -> tuple:
                 jira_url=st.secrets["jira_avis"]["url"],
                 email=st.secrets["jira_avis"]["email"],
                 api_token=st.secrets["jira_avis"]["api_token"],
-                board_id=str(config.JIRA_AVIS_BOARD_ID),
+                board_id=None,
                 target_column=config.JIRA_AVIS_TARGET_COLUMN,
                 target_per_month=cfg["velocity_target_per_month"],
-                mode="agile",
+                mode="jql",
                 epic=None,
                 label_filter=config.JIRA_AVIS_LABEL_FILTER,
             )
