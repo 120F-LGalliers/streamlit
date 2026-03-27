@@ -57,6 +57,10 @@ def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
 
     st.divider()
 
+    # Consistent x-axis across all bars so the "Today" line lands at the same visual position
+    max_utilization = max((tg["utilization"] for tg in harvest_data["task_groups"]), default=100)
+    x_max = max(100, max_utilization + 5)
+
     for tg in harvest_data["task_groups"]:
         status = tg["status"]
         icon = STATUS_ICON[status]
@@ -86,7 +90,7 @@ def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
         fig.update_layout(
             height=55,
             margin=dict(l=0, r=0, t=0, b=0),
-            xaxis=dict(range=[0, max(100, tg["utilization"] + 5)], visible=False),
+            xaxis=dict(range=[0, x_max], visible=False),
             yaxis=dict(visible=False),
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
@@ -96,7 +100,7 @@ def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
         projected = tg.get("projected", 0)
         already_over = tg["hours"] > tg["budgeted"]
         overrun_warning = (
-            " &nbsp; <span style='color:#ef4444;font-size:0.8em'>⚠️ Projected overrun!</span>"
+            " &nbsp; <span style='color:#ef4444;font-size:0.8em'>⚠️ projected overrun</span>"
             if projected > tg["budgeted"] * 1.05 and not already_over else ""
         )
 
