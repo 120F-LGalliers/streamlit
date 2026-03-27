@@ -62,11 +62,14 @@ def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
         icon = STATUS_ICON[status]
         bar_color = BURN_BAR_COLOR[status]
 
+        # Red only when hours have actually exceeded the budget; amber/green otherwise
+        actual_bar_color = "#ef4444" if tg["hours"] > tg["budgeted"] else bar_color
+
         fig = go.Figure(go.Bar(
             x=[tg["utilization"]],
             y=[tg["group"]],
             orientation="h",
-            marker_color=bar_color,
+            marker_color=actual_bar_color,
             text=f"{tg['utilization']:.0f}%",
             textposition="inside",
             insidetextanchor="start",
@@ -91,9 +94,10 @@ def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
         )
 
         projected = tg.get("projected", 0)
+        already_over = tg["hours"] > tg["budgeted"]
         overrun_warning = (
             " &nbsp; <span style='color:#ef4444;font-size:0.8em'>⚠️ projected overrun</span>"
-            if projected > tg["budgeted"] * 1.05 else ""
+            if projected > tg["budgeted"] * 1.05 and not already_over else ""
         )
 
         left, right = st.columns([5, 2])
