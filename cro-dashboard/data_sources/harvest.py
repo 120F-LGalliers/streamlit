@@ -178,10 +178,14 @@ def get_combined_harvest_data(project_ids: tuple, account_id: str, access_token:
         for tg in result["task_groups"]:
             g = tg["group"]
             if g not in merged:
-                merged[g] = {"group": g, "hours": 0.0, "budgeted": 0.0, "tasks": {}, "per_project": {}}
+                merged[g] = {
+                    "group": g, "hours": 0.0, "budgeted": 0.0,
+                    "tasks": {}, "per_project": {}, "per_project_tasks": {},
+                }
             merged[g]["hours"] += tg["hours"]
             merged[g]["budgeted"] += tg["budgeted"]
             merged[g]["per_project"][pid] = tg["hours"]
+            merged[g]["per_project_tasks"][pid] = tg["tasks"]  # already sorted by hours desc
             for task_name, task_hours in tg["tasks"].items():
                 merged[g]["tasks"][task_name] = merged[g]["tasks"].get(task_name, 0.0) + task_hours
 
@@ -214,6 +218,7 @@ def get_combined_harvest_data(project_ids: tuple, account_id: str, access_token:
             "projected_delta": projected_delta,
             "required_daily_rate": round(required_daily_rate, 2),
             "per_project": data.get("per_project", {}),
+            "per_project_tasks": data.get("per_project_tasks", {}),
         })
 
     total_hours = sum(r["total_hours"] for r in results)
