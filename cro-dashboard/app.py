@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 STATUS_ICON = {
-    "overburning":  "🔴",
+    "overburning":  "🟡",  # amber — overburning rate but not yet over budget
     "on_track":     "🟡",
     "underburning": "🟢",
     "exceeding":    "🚀",
@@ -34,7 +34,7 @@ STATUS_LABEL = {
 }
 
 BURN_BAR_COLOR = {
-    "overburning":  "#ef4444",
+    "overburning":  "#f59e0b",  # amber — bar stays calm; projection warning shown separately
     "on_track":     "#f59e0b",
     "underburning": "#10b981",
 }
@@ -90,9 +90,18 @@ def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
             showlegend=False,
         )
 
+        projected = tg.get("projected", 0)
+        overrun_warning = (
+            " &nbsp; <span style='color:#ef4444;font-size:0.8em'>⚠️ projected overrun</span>"
+            if projected > tg["budgeted"] * 1.05 else ""
+        )
+
         left, right = st.columns([5, 2])
         with left:
-            st.markdown(f"**{icon} {tg['group']}** — {tg['hours']:.1f}h of {tg['budgeted']:.1f}h budgeted")
+            st.markdown(
+                f"**{icon} {tg['group']}** — {tg['hours']:.1f}h of {tg['budgeted']:.1f}h budgeted{overrun_warning}",
+                unsafe_allow_html=True,
+            )
             st.plotly_chart(
                 fig,
                 key=f"{key_prefix}_{tg['group']}",
@@ -101,7 +110,6 @@ def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
             )
         with right:
             st.markdown("<br>", unsafe_allow_html=True)
-            projected = tg.get("projected", 0)
             proj_delta = tg.get("projected_delta", 0)
             budgeted = tg["budgeted"]
 
@@ -132,6 +140,7 @@ def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
 
         tasks = tg.get("tasks", {})
         per_project = tg.get("per_project", {})
+        per_project_tasks = tg.get("per_project_tasks", {})
         has_split = len(per_project) > 1
 
         expander_label = f"Task breakdown — {len(tasks)} task type{'s' if len(tasks) != 1 else ''}"
@@ -141,14 +150,20 @@ def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
         if tasks or has_split:
             with st.expander(expander_label):
                 if has_split:
-                    split_parts = []
+                    # Per-project section: each project's hours and its own task list
                     for pid, proj_hours in per_project.items():
-                        label = config.PROJECT_LABELS.get(pid, f"Project {pid}")
+                        proj_label = config.PROJECT_LABELS.get(pid, f"Project {pid}")
                         pct = (proj_hours / tg["hours"] * 100) if tg["hours"] > 0 else 0
-                        split_parts.append(f"**{label}**: {proj_hours:.1f}h ({pct:.0f}%)")
-                    st.markdown(" &nbsp;·&nbsp; ".join(split_parts), unsafe_allow_html=True)
-                    if tasks:
-                        st.divider()
+                        st.markdown(f"**{proj_label}** — {proj_hours:.1f}h ({pct:.0f}%)")
+                        for task_name, task_hours in per_project_tasks.get(pid, {}).items():
+                            task_pct = (task_hours / proj_hours * 100) if proj_hours > 0 else 0
+                            st.markdown(
+                                f"&nbsp;&nbsp;{task_name} &nbsp; {task_hours:.1f}h &nbsp;"
+                                f"<span style='color:#94a3b8'>({task_pct:.0f}%)</span>",
+                                unsafe_allow_html=True,
+                            )
+                    st.divider()
+                    st.markdown("**Combined**")
 
                 for task_name, task_hours in tasks.items():
                     pct = (task_hours / tg["hours"] * 100) if tg["hours"] > 0 else 0
