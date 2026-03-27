@@ -420,10 +420,10 @@ def load_client_data(client_name: str, cfg: dict) -> tuple:
                 jira_url=st.secrets["jira_avis"]["url"],
                 email=st.secrets["jira_avis"]["email"],
                 api_token=st.secrets["jira_avis"]["api_token"],
-                board_id=None,
+                board_id=str(config.JIRA_AVIS_BOARD_ID),
                 target_column=config.JIRA_AVIS_TARGET_COLUMN,
                 target_per_month=cfg["velocity_target_per_month"],
-                mode="jql",
+                mode="agile",
                 epic=None,
                 label_filter=config.JIRA_AVIS_LABEL_FILTER,
             )
