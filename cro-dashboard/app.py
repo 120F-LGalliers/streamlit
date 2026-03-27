@@ -96,7 +96,7 @@ def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
         projected = tg.get("projected", 0)
         already_over = tg["hours"] > tg["budgeted"]
         overrun_warning = (
-            " &nbsp; <span style='color:#ef4444;font-size:0.8em'>⚠️ projected overrun</span>"
+            " &nbsp; <span style='color:#ef4444;font-size:0.8em'>⚠️ Projected overrun!</span>"
             if projected > tg["budgeted"] * 1.05 and not already_over else ""
         )
 
