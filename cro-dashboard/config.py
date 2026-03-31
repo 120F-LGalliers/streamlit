@@ -66,7 +66,7 @@ PROJECT_LABELS = {
 
 # Jira — Tesco Mobile
 JIRA_TESCO_TARGET_EPIC   = "EAOA-260"
-JIRA_TESCO_TARGET_COLUMN = "Ready to Publish"
+JIRA_TESCO_TARGET_COLUMN = ["Ready to Publish", "Run"]
 
 # Jira — Avis
 JIRA_AVIS_BOARD_ID      = 5025       # agile board ID (not used in current JQL mode)
