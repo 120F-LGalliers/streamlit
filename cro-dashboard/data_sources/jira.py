@@ -175,12 +175,12 @@ def get_jira_velocity(
         else _fetch_via_agile_board(jira_url, auth, board_id, label_filter=label_filter)
     )
 
-    # month → list of (key, summary)
-    moved_to_target: dict[str, list] = defaultdict(list)
+    
+    moved_to_target: dict[str, dict[str, str]] = defaultdict(dict)  # month → {key: summary}
 
     for ticket in tickets:
         for month, key, summary in _extract_target_transitions(ticket, target_column, current_year):
-            moved_to_target[month].append((key, summary))
+            moved_to_target[month].setdefault(key, summary)
 
     # Build monthly summary
     monthly_data = []
