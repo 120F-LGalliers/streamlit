@@ -33,7 +33,7 @@ def _velocity_status(count: int, target: int) -> str:
     return "behind"
 
 
-def _extract_target_transitions(ticket: dict, target_column: str, current_year: int) -> list[tuple]:
+def _extract_target_transitions(ticket, target_columns, current_year):
     """
     Walk a ticket's changelog and return (month, key, summary) tuples for every
     transition into target_column that happened this year.
@@ -50,7 +50,7 @@ def _extract_target_transitions(ticket: dict, target_column: str, current_year: 
         for change in entry.get("items", []):
             if change.get("field") != "status":
                 continue
-            if change.get("toString", "").lower() == target_column.lower():
+            if change.get("toString", "").lower() in [c.lower() for c in target_columns]:
                 results.append((change_date.strftime("%B"), story_key, summary))
 
     return results
