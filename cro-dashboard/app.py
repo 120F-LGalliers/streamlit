@@ -293,9 +293,29 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
         st.plotly_chart(fig, use_container_width=True,
                         key=f"vel_{client_name}", config={"displayModeBar": False})
 
-    # Current month work-type breakdown (Dominos only / when breakdown exists)
+    all_month_items = velocity_data.get("all_month_items", {})
+    label = "A/B tests" if has_breakdown else "experiments"
+
+    # Month picker + work-type breakdown (Dominos only / when breakdown exists)
     if has_breakdown:
-        current_types = activity_breakdown.get(current_month_full, {})
+        all_months_ordered = list(_MONTH_ABB_TO_FULL.values())
+        available_months = [m for m in all_months_ordered if m in activity_breakdown]
+        if available_months:
+            default_idx = (
+                available_months.index(current_month_full)
+                if current_month_full in available_months
+                else len(available_months) - 1
+            )
+            selected_month = st.selectbox(
+                "View month",
+                options=available_months,
+                index=default_idx,
+                key=f"month_picker_{client_name}",
+            )
+        else:
+            selected_month = current_month_full
+
+        current_types = activity_breakdown.get(selected_month, {})
         if current_types:
             sorted_types = sorted(current_types.items(), key=lambda x: -x[1])
             type_labels = [t for t, _ in sorted_types]
@@ -321,20 +341,40 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
                 xaxis=dict(visible=False),
                 yaxis=dict(visible=True, autorange="reversed"),
             )
-            st.caption(f"Work type breakdown — {current_month_full}")
+            st.caption(f"Work type breakdown — {selected_month}")
             st.plotly_chart(fig_bd, use_container_width=True,
                             key=f"wtype_{client_name}", config={"displayModeBar": False})
 
-    items = velocity_data.get("current_month_items", [])
-    label = "A/B tests" if has_breakdown else "experiments"
-    if items:
-        with st.expander(f"This month's {label} ({len(items)})"):
-            for item in items:
-                st.write(f"• {item}")
-    else:
-        st.caption(f"No {label} have hit the target column yet this month.")
+        # Items for selected month
+        selected_items = all_month_items.get(selected_month, [])
+        if selected_items:
+            with st.expander(f"{selected_month} {label} ({len(selected_items)})"):
+                for item in selected_items:
+                    st.write(f"• {item}")
+        else:
+            st.caption(f"No {label} recorded for {selected_month}.")
 
-    all_month_items = velocity_data.get("all_month_items", {})
+        # Other work for selected month
+        all_other = velocity_data.get("all_month_other_items", {})
+        selected_other = all_other.get(selected_month, {})
+        if selected_other:
+            total_other = sum(len(v) for v in selected_other.values())
+            with st.expander(f"{selected_month} other work ({total_other})"):
+                for wtype, names in selected_other.items():
+                    st.markdown(f"**{wtype}** — {len(names)}")
+                    for name in names:
+                        st.write(f"• {name}")
+
+    else:
+        items = velocity_data.get("current_month_items", [])
+        if items:
+            with st.expander(f"This month's {label} ({len(items)})"):
+                for item in items:
+                    st.write(f"• {item}")
+        else:
+            st.caption(f"No {label} have hit the target column yet this month.")
+
+    # Full year breakdown — always shown for all clients
     if all_month_items:
         with st.expander(f"Full year {label} breakdown"):
             for month, month_items in all_month_items.items():
@@ -350,15 +390,6 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
                 st.divider()
 
     if has_breakdown:
-        other_this_month = velocity_data.get("current_month_other_items", {})
-        if other_this_month:
-            total_other = sum(len(v) for v in other_this_month.values())
-            with st.expander(f"This month's other work ({total_other})"):
-                for wtype, names in other_this_month.items():
-                    st.markdown(f"**{wtype}** — {len(names)}")
-                    for name in names:
-                        st.write(f"• {name}")
-
         all_other = velocity_data.get("all_month_other_items", {})
         if all_other:
             with st.expander("Full year other work breakdown"):
