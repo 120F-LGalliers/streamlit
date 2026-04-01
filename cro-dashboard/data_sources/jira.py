@@ -223,17 +223,22 @@ def get_jira_velocity(
             label=label_filter,
         )
     else:
-        tickets = _fetch_via_agile_board(jira_url, auth, board_id)
+        tickets = _fetch_via_agile_board(jira_url, auth, board_id, label_filter=label_filter)
 
     # month → {key: summary} — dict ensures each ticket counted once per month
-    # even if it hits multiple target columns
+    # even if it hits multiple target columns.
+    # seen_keys ensures each ticket is counted at most once globally across all months
+    # (prevents a ticket cycling through target columns in different months being double-counted).
     moved_to_target: dict[str, dict[str, str]] = defaultdict(dict)
+    seen_keys: set[str] = set()
 
     for ticket in tickets:
         for month, key, summary in _extract_target_transitions(
             ticket, list(target_columns), current_year
         ):
-            moved_to_target[month].setdefault(key, summary)  # first transition wins
+            if key not in seen_keys:
+                moved_to_target[month].setdefault(key, summary)  # first transition wins
+                seen_keys.add(key)
 
     # Build monthly summary
     monthly_data = []
