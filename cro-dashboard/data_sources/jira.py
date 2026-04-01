@@ -33,13 +33,18 @@ def _velocity_status(count: int, target: int) -> str:
     return "behind"
 
 
-def _extract_target_transitions(ticket, target_columns, current_year):
+def _extract_target_transitions(
+    ticket: dict,
+    target_columns: list[str],
+    current_year: int,
+) -> list[tuple]:
     """
     Walk a ticket's changelog and return (month, key, summary) tuples for every
-    transition into target_column that happened this year.
+    transition into any of target_columns that happened this year.
     """
     story_key = ticket.get("key", "UNKNOWN")
     summary = ticket.get("fields", {}).get("summary", "No Summary")
+    normalised_targets = {c.lower() for c in target_columns}
     results = []
 
     for entry in ticket.get("changelog", {}).get("histories", []):
@@ -50,7 +55,7 @@ def _extract_target_transitions(ticket, target_columns, current_year):
         for change in entry.get("items", []):
             if change.get("field") != "status":
                 continue
-            if change.get("toString", "").lower() in [c.lower() for c in target_columns]:
+            if change.get("toString", "").lower() in normalised_targets:
                 results.append((change_date.strftime("%B"), story_key, summary))
 
     return results
@@ -60,42 +65,79 @@ def _extract_target_transitions(ticket, target_columns, current_year):
 # Fetch helpers (one per Jira API pattern)
 # ─────────────────────────────────────────
 
-def _fetch_via_jql(jira_url: str, auth: HTTPBasicAuth, epic: str, current_year: int) -> list[dict]:
-    """POST-based JQL search — used for Tesco Mobile (epic-scoped)."""
+def _fetch_via_jql(
+    jira_url: str,
+    auth: HTTPBasicAuth,
+    current_year: int,
+    epic: Optional[str] = None,
+    label: Optional[str] = None,
+) -> list[dict]:
+    """
+    POST-based JQL search.
+    - epic  → Tesco Mobile pattern (parentEpic / Epic Link, tries both)
+    - label → Avis pattern (labels = "X") — returns all historical issues,
+              unlike the agile board endpoint which only returns active issues
+    """
     search_url = f"{jira_url}/rest/api/3/search/jql"
 
-    jql_variants = [
-        f"parentEpic = {epic} AND issuetype = Story AND updated >= {current_year}-01-01",
-        f'"Epic Link" = {epic} AND issuetype = Story AND updated >= {current_year}-01-01',
-    ]
+    if epic:
+        # Run BOTH epic-link patterns and union by issue key.
+        # Some tickets use the newer parentEpic field, others the older "Epic Link"
+        # custom field — returning early on the first 200 misses tickets only in the second.
+        jql_variants = [
+            f"parentEpic = {epic} AND issuetype = Story AND updated >= {current_year}-01-01",
+            f'"Epic Link" = {epic} AND issuetype = Story AND updated >= {current_year}-01-01',
+        ]
+        merged: dict[str, dict] = {}  # key → issue, deduplicates across both queries
 
-    for jql in jql_variants:
-        payload: dict = {
-            "jql": jql,
-            "maxResults": 1000,
-            "fields": ["summary", "status"],
-            "expand": "changelog",
-        }
+        for jql in jql_variants:
+            payload: dict = {
+                "jql": jql,
+                "maxResults": 1000,
+                "fields": ["summary", "status"],
+                "expand": "changelog",
+            }
+            while True:
+                resp = requests.post(search_url, auth=auth, json=payload, timeout=30)
+                if resp.status_code != 200:
+                    break
+                data = resp.json()
+                for issue in data.get("issues", []):
+                    merged[issue["key"]] = issue  # last write wins but changelogs are identical
+                next_token = data.get("nextPageToken")
+                if not next_token or data.get("isLast"):
+                    break
+                payload["nextPageToken"] = next_token
+                payload.pop("startAt", None)
+
+        return list(merged.values())
+
+    elif label:
+        jql_variants = [
+            f'labels = "{label}" AND issuetype = Story AND updated >= {current_year}-01-01',
+        ]
         all_issues: list[dict] = []
 
-        while True:
-            resp = requests.post(search_url, auth=auth, json=payload, timeout=30)
-            if resp.status_code != 200:
-                break
+        for jql in jql_variants:
+            payload = {
+                "jql": jql,
+                "maxResults": 1000,
+                "fields": ["summary", "status"],
+                "expand": "changelog",
+            }
+            while True:
+                resp = requests.post(search_url, auth=auth, json=payload, timeout=30)
+                if resp.status_code != 200:
+                    break
+                data = resp.json()
+                all_issues.extend(data.get("issues", []))
+                next_token = data.get("nextPageToken")
+                if not next_token or data.get("isLast"):
+                    break
+                payload["nextPageToken"] = next_token
+                payload.pop("startAt", None)
 
-            data = resp.json()
-            issues = data.get("issues", [])
-            all_issues.extend(issues)
-
-            next_token = data.get("nextPageToken")
-            if not next_token or data.get("isLast"):
-                break
-            payload["nextPageToken"] = next_token
-            payload.pop("startAt", None)
-
-        # Accept the result if we got a 200 (even zero results)
-        if resp.status_code == 200:
-            return all_issues
+        return all_issues
 
     return []
 
@@ -152,35 +194,46 @@ def get_jira_velocity(
     email: str,
     api_token: str,
     board_id: Optional[str],
-    target_column: str,
+    target_columns: tuple[str, ...],    # tuple so it's hashable for st.cache_data
     target_per_month: int,
     mode: str,                          # "jql" | "agile"
     epic: Optional[str],
-    label_filter: Optional[str] = None, # agile mode only
+    label_filter: Optional[str] = None,
 ) -> dict:
     """
     Unified Jira velocity fetcher.
 
-    mode="jql"    → Tesco Mobile pattern (POST JQL, epic-scoped)
-    mode="agile"  → Avis pattern (GET agile board endpoint)
+    mode="jql"   + epic         → Tesco Mobile (POST JQL, epic-scoped)
+    mode="jql"   + label_filter → Avis (POST JQL, label-scoped — full history)
+    mode="agile"                → agile board endpoint (active issues only, kept for reference)
+
+    target_columns is a tuple of status names that count as a completed experiment.
+    A ticket is counted at most once per month even if it transitions through
+    multiple target columns (e.g. straight to Run, bypassing Ready to Publish).
     """
     auth = HTTPBasicAuth(email, api_token)
     current_year = datetime.datetime.now().year
     current_month = datetime.datetime.now().strftime("%B")
     current_month_idx = datetime.datetime.now().month
 
-    tickets = (
-        _fetch_via_jql(jira_url, auth, epic, current_year)
-        if mode == "jql"
-        else _fetch_via_agile_board(jira_url, auth, board_id, label_filter=label_filter)
-    )
+    if mode == "jql":
+        tickets = _fetch_via_jql(
+            jira_url, auth, current_year,
+            epic=epic,
+            label=label_filter,
+        )
+    else:
+        tickets = _fetch_via_agile_board(jira_url, auth, board_id)
 
-    
-    moved_to_target: dict[str, dict[str, str]] = defaultdict(dict)  # month → {key: summary}
+    # month → {key: summary} — dict ensures each ticket counted once per month
+    # even if it hits multiple target columns
+    moved_to_target: dict[str, dict[str, str]] = defaultdict(dict)
 
     for ticket in tickets:
-        for month, key, summary in _extract_target_transitions(ticket, target_column, current_year):
-            moved_to_target[month].setdefault(key, summary)
+        for month, key, summary in _extract_target_transitions(
+            ticket, list(target_columns), current_year
+        ):
+            moved_to_target[month].setdefault(key, summary)  # first transition wins
 
     # Build monthly summary
     monthly_data = []
@@ -188,20 +241,20 @@ def get_jira_velocity(
 
     for i in range(current_month_idx):
         month = MONTHS_ORDER[i]
-        count = len(moved_to_target.get(month, []))
+        count = len(moved_to_target.get(month, {}))
         monthly_data.append({"month": month[:3], "count": count, "target": target_per_month})
         ytd_count += count
 
-    current_count = len(moved_to_target.get(current_month, []))
+    current_count = len(moved_to_target.get(current_month, {}))
     ytd_target = target_per_month * current_month_idx
 
     current_items = [
         f"{key} — {summary}"
-        for key, summary in moved_to_target.get(current_month, [])
+        for key, summary in moved_to_target.get(current_month, {}).items()
     ]
 
     all_month_items = {
-        month: [f"{key} — {summary}" for key, summary in items]
+        month: [f"{key} — {summary}" for key, summary in items.items()]
         for month, items in moved_to_target.items()
         if items
     }
