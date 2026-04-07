@@ -33,7 +33,7 @@ TASK_GROUPS = {
     22783286: "Analysis", 22783287: "Analysis", 22783289: "Analysis", 22783288: "Analysis",
     22783264: "QA",       23771418: "QA",
     22782955: "CRO/PM/BA", 22782953: "CRO/PM/BA", 22782952: "CRO/PM/BA",
-    22782954: "CRO/PM/BA", 22782958: "CRO/PM/BA",
+    22782954: "CRO/PM/BA", 22782958: "CRO/PM/BA", 18916692: "CRO/PM/BA",
     22783265: "Design",
     16091205: "Workshop",
 }
