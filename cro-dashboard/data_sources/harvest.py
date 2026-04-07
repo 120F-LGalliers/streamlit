@@ -85,23 +85,34 @@ def _get_harvest_client_projects(reference_project_id: int, account_id: str, acc
     if not client_id:
         return []
 
-    # Fetch every project for this client (omitting is_active returns all)
+    # Fetch all projects for this client — request active and inactive separately
+    # because the Harvest API defaults to active-only when is_active is omitted.
     all_projects: list[dict] = []
-    page = 1
-    while True:
-        resp = requests.get(
-            f"{BASE_URL}/projects",
-            headers=headers,
-            params={"client_id": client_id, "per_page": 100, "page": page},
-            timeout=30,
-        )
-        if resp.status_code != 200:
-            break
-        batch = resp.json().get("projects", [])
-        all_projects.extend(batch)
-        if len(batch) < 100:
-            break
-        page += 1
+    seen_ids: set[int] = set()
+    for is_active in ("true", "false"):
+        page = 1
+        while True:
+            resp = requests.get(
+                f"{BASE_URL}/projects",
+                headers=headers,
+                params={
+                    "client_id": client_id,
+                    "is_active": is_active,
+                    "per_page": 100,
+                    "page": page,
+                },
+                timeout=30,
+            )
+            if resp.status_code != 200:
+                break
+            batch = resp.json().get("projects", [])
+            for proj in batch:
+                if proj["id"] not in seen_ids:
+                    seen_ids.add(proj["id"])
+                    all_projects.append(proj)
+            if len(batch) < 100:
+                break
+            page += 1
     return all_projects
 
 
@@ -193,7 +204,8 @@ def get_harvest_project_date_range(
         try:
             projects = _get_harvest_client_projects(ref_pid, account_id, access_token)
             for proj in projects:
-                starts_str = proj.get("starts_on")
+                # Prefer starts_on, fall back to created_at (first 10 chars = YYYY-MM-DD)
+                starts_str = proj.get("starts_on") or (proj.get("created_at") or "")[:10]
                 if starts_str:
                     try:
                         starts = datetime.date.fromisoformat(starts_str)
