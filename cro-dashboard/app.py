@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import config
-from data_sources.harvest import get_harvest_data, get_combined_harvest_data
+from data_sources.harvest import get_harvest_data, get_combined_harvest_data, get_project_ids_for_month
 from data_sources.jira import get_jira_velocity
 from data_sources.monday_com import get_monday_velocity
 from data_sources.trello import get_trello_velocity
@@ -43,16 +43,24 @@ BURN_BAR_COLOR = {
 def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
     month_progress = harvest_data["month_progress"]
 
+    is_complete = harvest_data.get("is_complete", False)
+
     c1, c2, c3 = st.columns(3)
     c1.metric("Billable hours", f"{harvest_data['total_billable']:.1f}h")
     c2.metric("Non-billable hours", f"{sum(harvest_data['non_billable'].values()):.1f}h")
     c3.metric("Month complete", f"{month_progress:.0f}%")
 
-    st.caption(f"Based on working days — {month_progress:.0f}% of the month has passed")
+    if is_complete:
+        st.caption("Complete month — all working days elapsed")
+    else:
+        st.caption(f"Based on working days — {month_progress:.0f}% of the month has passed")
     st.progress(month_progress / 100)
 
     if not harvest_data["task_groups"]:
-        st.info("No billable hours logged yet this month.")
+        if is_complete:
+            st.info("No billable hours were recorded for this month.")
+        else:
+            st.info("No billable hours logged yet this month.")
         return
 
     st.divider()
@@ -99,10 +107,13 @@ def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
 
         projected = tg.get("projected", 0)
         already_over = tg["hours"] > tg["budgeted"]
-        overrun_warning = (
-            " &nbsp; <span style='color:#ef4444;font-size:0.8em'>⚠️ projected overrun</span>"
-            if projected > tg["budgeted"] * 1.05 and not already_over else ""
-        )
+        if is_complete:
+            overrun_warning = ""  # red bar already signals over budget
+        else:
+            overrun_warning = (
+                " &nbsp; <span style='color:#ef4444;font-size:0.8em'>⚠️ projected overrun</span>"
+                if projected > tg["budgeted"] * 1.05 and not already_over else ""
+            )
 
         left, right = st.columns([5, 2])
         with left:
@@ -137,14 +148,16 @@ def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
                     if proj_delta > 0
                     else f"{abs(proj_delta):.1f}h under budget"
                 )
+                proj_label = "Final" if is_complete else "Projected"
                 st.markdown(
-                    f"**{proj_icon} Projected: {projected:.1f}h**  \n"
+                    f"**{proj_icon} {proj_label}: {projected:.1f}h**  \n"
                     f"<span style='color:{proj_color};font-size:0.85em'>{delta_str}</span>",
                     unsafe_allow_html=True,
                 )
-                current_rate = tg.get("daily_rate", 0)
-                required_rate = tg.get("required_daily_rate", 0)
-                st.caption(f"Need {required_rate:.1f}h/day · burning {current_rate:.1f}h/day")
+                if not is_complete:
+                    current_rate = tg.get("daily_rate", 0)
+                    required_rate = tg.get("required_daily_rate", 0)
+                    st.caption(f"Need {required_rate:.1f}h/day · burning {current_rate:.1f}h/day")
 
         tasks = tg.get("tasks", {})
         per_project = tg.get("per_project", {})
@@ -186,6 +199,20 @@ _MONTH_ABB_TO_FULL = {m[:3]: m for m in [
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December",
 ]}
+
+def _available_months() -> list[tuple[int, int]]:
+    """Return (year, month) tuples for the last 13 months, most recent first."""
+    today = datetime.date.today()
+    months = []
+    year, month = today.year, today.month
+    for _ in range(13):
+        months.append((year, month))
+        month -= 1
+        if month == 0:
+            month = 12
+            year -= 1
+    return months
+
 
 # Categorical palette for non-A/B activity types
 _TYPE_COLORS = [
@@ -404,15 +431,27 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
                     st.divider()
 
 
-def load_client_data(client_name: str, cfg: dict) -> tuple:
+def load_client_data(client_name: str, cfg: dict, year: int = None, month: int = None) -> tuple:
     try:
-        project_ids = tuple(
+        current_ids = tuple(
             cfg.get("harvest_project_ids") or [cfg["harvest_project_id"]]
+        )
+        # Dynamically resolve the correct project IDs for the selected month —
+        # project IDs change each year so we look them up from Harvest rather than
+        # relying on the hardcoded values in config.
+        project_ids = get_project_ids_for_month(
+            current_ids,
+            year or datetime.datetime.now().year,
+            month or datetime.datetime.now().month,
+            st.secrets["harvest"]["account_id"],
+            st.secrets["harvest"]["access_token"],
         )
         harvest_data = get_combined_harvest_data(
             project_ids,
             st.secrets["harvest"]["account_id"],
             st.secrets["harvest"]["access_token"],
+            year=year,
+            month=month,
         )
     except Exception as exc:
         st.error(f"Could not load Harvest data: {exc}")
@@ -484,17 +523,30 @@ def main() -> None:
     tab_labels = [f"{cfg['icon']} {name}" for name, cfg in config.CLIENTS.items()]
     tabs = st.tabs(tab_labels)
 
+    avail_months = _available_months()
+    month_labels = [datetime.date(y, m, 1).strftime("%B %Y") for y, m in avail_months]
+
     for tab, client_name in zip(tabs, client_names):
         cfg = config.CLIENTS[client_name]
 
         with tab:
-            with st.spinner(f"Loading {client_name} data…"):
-                harvest_data, velocity_data = load_client_data(client_name, cfg)
-
             hours_col, velocity_col = st.columns([3, 2], gap="large")
 
             with hours_col:
                 st.subheader("🕐 Hours")
+                sel_label = st.selectbox(
+                    "View month",
+                    options=month_labels,
+                    key=f"hours_month_{client_name}",
+                )
+                sel_year, sel_month = avail_months[month_labels.index(sel_label)]
+
+            with st.spinner(f"Loading {client_name} data…"):
+                harvest_data, velocity_data = load_client_data(
+                    client_name, cfg, year=sel_year, month=sel_month
+                )
+
+            with hours_col:
                 if harvest_data:
                     render_hours(harvest_data, key_prefix=client_name)
                 else:
