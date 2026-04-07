@@ -532,15 +532,28 @@ def main() -> None:
                     )
                     max_date = datetime.date.today()
 
-                selected_date = st.date_input(
+                # Build month/year options from project date range, most recent first
+                today = datetime.date.today()
+                cursor = datetime.date(min_date.year, min_date.month, 1)
+                month_options = []
+                while cursor <= today:
+                    month_options.append((cursor.year, cursor.month))
+                    m = cursor.month + 1 if cursor.month < 12 else 1
+                    y = cursor.year if cursor.month < 12 else cursor.year + 1
+                    cursor = datetime.date(y, m, 1)
+                month_options.reverse()  # most recent first
+
+                month_labels = [
+                    datetime.date(y, m, 1).strftime("%B %Y")
+                    for y, m in month_options
+                ]
+                sel_label = st.selectbox(
                     "View month",
-                    value=datetime.date.today().replace(day=1),
-                    min_value=min_date,
-                    max_value=max_date,
+                    options=month_labels,
+                    index=0,
                     key=f"hours_month_{client_name}",
                 )
-                sel_year = selected_date.year
-                sel_month = selected_date.month
+                sel_year, sel_month = month_options[month_labels.index(sel_label)]
 
             with st.spinner(f"Loading {client_name} data…"):
                 harvest_data, velocity_data = load_client_data(
