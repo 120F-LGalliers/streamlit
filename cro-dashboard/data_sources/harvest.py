@@ -81,7 +81,7 @@ def _get_harvest_client_projects(reference_project_id: int, account_id: str, acc
     resp = requests.get(f"{BASE_URL}/projects/{reference_project_id}", headers=headers, timeout=30)
     if resp.status_code != 200:
         return []
-    client_id = resp.json().get("project", {}).get("client", {}).get("id")
+    client_id = resp.json().get("client", {}).get("id")
     if not client_id:
         return []
 
