@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import config
-from data_sources.harvest import get_harvest_data, get_combined_harvest_data, get_project_ids_for_month
+from data_sources.harvest import get_harvest_data, get_combined_harvest_data, get_project_ids_for_month, get_harvest_project_date_range
 from data_sources.jira import get_jira_velocity
 from data_sources.monday_com import get_monday_velocity
 from data_sources.trello import get_trello_velocity
@@ -199,20 +199,6 @@ _MONTH_ABB_TO_FULL = {m[:3]: m for m in [
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December",
 ]}
-
-def _available_months() -> list[tuple[int, int]]:
-    """Return (year, month) tuples for the last 13 months, most recent first."""
-    today = datetime.date.today()
-    months = []
-    year, month = today.year, today.month
-    for _ in range(13):
-        months.append((year, month))
-        month -= 1
-        if month == 0:
-            month = 12
-            year -= 1
-    return months
-
 
 # Categorical palette for non-A/B activity types
 _TYPE_COLORS = [
@@ -523,9 +509,6 @@ def main() -> None:
     tab_labels = [f"{cfg['icon']} {name}" for name, cfg in config.CLIENTS.items()]
     tabs = st.tabs(tab_labels)
 
-    avail_months = _available_months()
-    month_labels = [datetime.date(y, m, 1).strftime("%B %Y") for y, m in avail_months]
-
     for tab, client_name in zip(tabs, client_names):
         cfg = config.CLIENTS[client_name]
 
@@ -534,12 +517,30 @@ def main() -> None:
 
             with hours_col:
                 st.subheader("🕐 Hours")
-                sel_label = st.selectbox(
+                current_ids = tuple(
+                    cfg.get("harvest_project_ids") or [cfg["harvest_project_id"]]
+                )
+                try:
+                    min_date, max_date = get_harvest_project_date_range(
+                        current_ids,
+                        st.secrets["harvest"]["account_id"],
+                        st.secrets["harvest"]["access_token"],
+                    )
+                except Exception:
+                    min_date = datetime.date.today().replace(
+                        year=datetime.date.today().year - 1, day=1
+                    )
+                    max_date = datetime.date.today()
+
+                selected_date = st.date_input(
                     "View month",
-                    options=month_labels,
+                    value=datetime.date.today().replace(day=1),
+                    min_value=min_date,
+                    max_value=max_date,
                     key=f"hours_month_{client_name}",
                 )
-                sel_year, sel_month = avail_months[month_labels.index(sel_label)]
+                sel_year = selected_date.year
+                sel_month = selected_date.month
 
             with st.spinner(f"Loading {client_name} data…"):
                 harvest_data, velocity_data = load_client_data(
