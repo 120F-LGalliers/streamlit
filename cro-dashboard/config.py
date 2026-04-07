@@ -22,7 +22,7 @@ CLIENTS = {
     "Avis": {
         "harvest_project_ids": [47029297, 47725794],  # two Harvest projects, combined view
         "pm_tool": "jira_avis",
-        "velocity_target_per_month": 2,
+        "velocity_target_per_month": 8,
         "icon": "🚗",
     },
 }
