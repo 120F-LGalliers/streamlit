@@ -172,18 +172,25 @@ def get_combined_harvest_data(project_ids: tuple, account_id: str, access_token:
 
     results = [get_harvest_data(pid, account_id, access_token) for pid in project_ids]
 
-    # Merge task groups: sum hours, budgets, task-level breakdowns, and per-project split
+    # Sum budgets across ALL projects directly from PROJECT_BUDGETS, regardless of whether
+    # any hours have been logged — prevents a project with 0 hours in a group from losing
+    # its budget contribution.
+    combined_budgets: dict[str, float] = {}
+    for pid in project_ids:
+        for group, budget in PROJECT_BUDGETS.get(pid, {}).items():
+            combined_budgets[group] = combined_budgets.get(group, 0.0) + budget
+
+    # Merge task groups: sum hours and task-level breakdowns
     merged: dict[str, dict] = {}
     for pid, result in zip(project_ids, results):
         for tg in result["task_groups"]:
             g = tg["group"]
             if g not in merged:
                 merged[g] = {
-                    "group": g, "hours": 0.0, "budgeted": 0.0,
+                    "group": g, "hours": 0.0,
                     "tasks": {}, "per_project": {}, "per_project_tasks": {},
                 }
             merged[g]["hours"] += tg["hours"]
-            merged[g]["budgeted"] += tg["budgeted"]
             merged[g]["per_project"][pid] = tg["hours"]
             merged[g]["per_project_tasks"][pid] = tg["tasks"]  # already sorted by hours desc
             for task_name, task_hours in tg["tasks"].items():
@@ -196,7 +203,7 @@ def get_combined_harvest_data(project_ids: tuple, account_id: str, access_token:
     task_groups_data = []
     for group, data in sorted(merged.items()):
         hours = data["hours"]
-        budgeted = data["budgeted"]
+        budgeted = combined_budgets.get(group, 0.0)
         utilization = (hours / budgeted * 100) if budgeted > 0 else 0.0
         remaining = budgeted - hours
         daily_rate = (hours / wd["elapsed"]) if wd["elapsed"] > 0 else 0.0
