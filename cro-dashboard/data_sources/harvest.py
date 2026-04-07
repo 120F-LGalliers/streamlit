@@ -1,4 +1,5 @@
 import datetime
+import re
 import requests
 import streamlit as st
 
@@ -7,15 +8,19 @@ from config import TASK_GROUPS, TEAM_MEMBERS, PROJECT_BUDGETS
 BASE_URL = "https://api.harvestapp.com/v2"
 
 
-def _get_working_day_stats() -> dict:
-    """Return working day counts and month progress percentage."""
+def _get_working_day_stats(year: int = None, month: int = None) -> dict:
+    """Return working day counts and month progress percentage for the given month."""
     today = datetime.date.today()
-    first_day = today.replace(day=1)
+    if year is None:
+        year = today.year
+    if month is None:
+        month = today.month
 
-    if today.month == 12:
-        first_day_next = today.replace(year=today.year + 1, month=1, day=1)
+    first_day = datetime.date(year, month, 1)
+    if month == 12:
+        first_day_next = datetime.date(year + 1, 1, 1)
     else:
-        first_day_next = today.replace(month=today.month + 1, day=1)
+        first_day_next = datetime.date(year, month + 1, 1)
 
     total_days = (first_day_next - first_day).days
     weekdays = {0, 1, 2, 3, 4}
@@ -24,17 +29,32 @@ def _get_working_day_stats() -> dict:
         1 for d in range(total_days)
         if (first_day + datetime.timedelta(days=d)).weekday() in weekdays
     )
-    elapsed = sum(
-        1 for d in range(today.day)
-        if (first_day + datetime.timedelta(days=d)).weekday() in weekdays
-    )
-    remaining = total_working - elapsed
+
+    is_past = (year, month) < (today.year, today.month)
+    is_current = (year == today.year and month == today.month)
+
+    if is_past:
+        elapsed = total_working
+        remaining = 0
+        progress_pct = 100.0
+    elif is_current:
+        elapsed = sum(
+            1 for d in range(today.day)
+            if (first_day + datetime.timedelta(days=d)).weekday() in weekdays
+        )
+        remaining = total_working - elapsed
+        progress_pct = (elapsed / total_working * 100) if total_working > 0 else 0.0
+    else:
+        elapsed = 0
+        remaining = total_working
+        progress_pct = 0.0
 
     return {
         "total": total_working,
         "elapsed": elapsed,
         "remaining": remaining,
-        "progress_pct": (elapsed / total_working * 100) if total_working > 0 else 0.0,
+        "progress_pct": progress_pct,
+        "is_complete": is_past,
     }
 
 
@@ -46,11 +66,121 @@ def _get_burn_status(utilization_pct: float, month_progress: float) -> str:
     return "on_track"
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def get_harvest_data(project_id: int, account_id: str, access_token: str) -> dict:
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_harvest_client_projects(reference_project_id: int, account_id: str, access_token: str) -> list[dict]:
     """
-    Fetch and process all time entries for the current month for a given project.
-    Returns structured data ready for the dashboard to render.
+    Fetch all projects (active + inactive) for the same Harvest client as reference_project_id.
+    Used to resolve the correct project IDs when browsing historical months.
+    """
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Harvest-Account-Id": account_id,
+        "User-Agent": "CRO-Dashboard/1.0",
+    }
+    # Resolve client ID from the reference project
+    resp = requests.get(f"{BASE_URL}/projects/{reference_project_id}", headers=headers, timeout=30)
+    if resp.status_code != 200:
+        return []
+    client_id = resp.json().get("project", {}).get("client", {}).get("id")
+    if not client_id:
+        return []
+
+    # Fetch every project for this client (omitting is_active returns all)
+    all_projects: list[dict] = []
+    page = 1
+    while True:
+        resp = requests.get(
+            f"{BASE_URL}/projects",
+            headers=headers,
+            params={"client_id": client_id, "per_page": 100, "page": page},
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            break
+        batch = resp.json().get("projects", [])
+        all_projects.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+    return all_projects
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_project_ids_for_month(
+    current_project_ids: tuple[int, ...],
+    year: int,
+    month: int,
+    account_id: str,
+    access_token: str,
+) -> tuple[int, ...]:
+    """
+    Find the Harvest project IDs for the same client(s) that cover the requested year/month.
+
+    Strategy (in priority order):
+      1. Projects whose starts_on / ends_on date range overlaps the requested month.
+      2. Projects with no dates set but whose name contains the requested year (e.g. "Avis 2025").
+      3. Fall back to current_project_ids if no match found.
+    """
+    today = datetime.date.today()
+    # Current month — no remapping needed
+    if year == today.year and month == today.month:
+        return current_project_ids
+
+    month_start = datetime.date(year, month, 1)
+    month_end = (
+        datetime.date(year + 1, 1, 1) if month == 12
+        else datetime.date(year, month + 1, 1)
+    ) - datetime.timedelta(days=1)
+
+    date_matches: list[int] = []
+    name_matches: list[int] = []
+    seen: set[int] = set()
+
+    for ref_pid in current_project_ids:
+        try:
+            projects = _get_harvest_client_projects(ref_pid, account_id, access_token)
+        except Exception:
+            continue
+
+        for proj in projects:
+            pid = proj["id"]
+            if pid in seen:
+                continue
+
+            starts_str = proj.get("starts_on")
+            ends_str = proj.get("ends_on")
+
+            if starts_str or ends_str:
+                # Match by date range
+                try:
+                    starts = datetime.date.fromisoformat(starts_str) if starts_str else datetime.date.min
+                except ValueError:
+                    starts = datetime.date.min
+                try:
+                    ends = datetime.date.fromisoformat(ends_str) if ends_str else datetime.date.max
+                except ValueError:
+                    ends = datetime.date.max
+
+                if starts <= month_end and ends >= month_start:
+                    date_matches.append(pid)
+                    seen.add(pid)
+            else:
+                # No dates — fall back to year in project name
+                m = re.search(r'\b(20\d{2})\b', proj.get("name", ""))
+                if m and int(m.group(1)) == year:
+                    name_matches.append(pid)
+                    seen.add(pid)
+
+    result = date_matches or name_matches
+    return tuple(result) if result else current_project_ids
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_harvest_data(project_id: int, account_id: str, access_token: str,
+                     year: int = None, month: int = None) -> dict:
+    """
+    Fetch and process all time entries for the given month for a project.
+    Defaults to the current month. Returns structured data ready for the dashboard.
     """
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -59,12 +189,22 @@ def get_harvest_data(project_id: int, account_id: str, access_token: str) -> dic
     }
 
     today = datetime.date.today()
-    first_day = today.replace(day=1)
+    if year is None:
+        year = today.year
+    if month is None:
+        month = today.month
+
+    first_day = datetime.date(year, month, 1)
+    if month == 12:
+        last_day = datetime.date(year + 1, 1, 1) - datetime.timedelta(days=1)
+    else:
+        last_day = datetime.date(year, month + 1, 1) - datetime.timedelta(days=1)
+    to_date = today if (year == today.year and month == today.month) else last_day
 
     params = {
         "project_id": project_id,
         "from": first_day.strftime("%Y-%m-%d"),
-        "to": today.strftime("%Y-%m-%d"),
+        "to": to_date.strftime("%Y-%m-%d"),
         "per_page": 100,
     }
 
@@ -112,7 +252,7 @@ def get_harvest_data(project_id: int, account_id: str, access_token: str) -> dic
         else:
             non_billable[task_group] = non_billable.get(task_group, 0.0) + hours
 
-    wd = _get_working_day_stats()
+    wd = _get_working_day_stats(year=year, month=month)
     month_progress = wd["progress_pct"]
     budget = PROJECT_BUDGETS.get(project_id, {})
 
@@ -156,11 +296,13 @@ def get_harvest_data(project_id: int, account_id: str, access_token: str) -> dic
         "total_billable": total_billable,
         "non_billable": non_billable,
         "month_progress": month_progress,
+        "is_complete": wd.get("is_complete", False),
         "billable_pct": (total_billable / total_hours * 100) if total_hours > 0 else 0.0,
     }
 
 
-def get_combined_harvest_data(project_ids: tuple, account_id: str, access_token: str) -> dict:
+def get_combined_harvest_data(project_ids: tuple, account_id: str, access_token: str,
+                               year: int = None, month: int = None) -> dict:
     """
     Fetch multiple Harvest projects and merge into a single result.
     Hours and budgets are summed across all projects; projections are
@@ -168,9 +310,9 @@ def get_combined_harvest_data(project_ids: tuple, account_id: str, access_token:
     For a single project ID this is equivalent to get_harvest_data.
     """
     if len(project_ids) == 1:
-        return get_harvest_data(project_ids[0], account_id, access_token)
+        return get_harvest_data(project_ids[0], account_id, access_token, year=year, month=month)
 
-    results = [get_harvest_data(pid, account_id, access_token) for pid in project_ids]
+    results = [get_harvest_data(pid, account_id, access_token, year=year, month=month) for pid in project_ids]
 
     # Sum budgets across ALL projects directly from PROJECT_BUDGETS, regardless of whether
     # any hours have been logged — prevents a project with 0 hours in a group from losing
@@ -197,7 +339,7 @@ def get_combined_harvest_data(project_ids: tuple, account_id: str, access_token:
                 merged[g]["tasks"][task_name] = merged[g]["tasks"].get(task_name, 0.0) + task_hours
 
     # Recalculate all derived fields on combined totals
-    wd = _get_working_day_stats()
+    wd = _get_working_day_stats(year=year, month=month)
     month_progress = wd["progress_pct"]
 
     task_groups_data = []
@@ -242,5 +384,6 @@ def get_combined_harvest_data(project_ids: tuple, account_id: str, access_token:
         "total_billable": total_billable,
         "non_billable": combined_non_billable,
         "month_progress": month_progress,
+        "is_complete": wd.get("is_complete", False),
         "billable_pct": (total_billable / total_hours * 100) if total_hours > 0 else 0.0,
     }
