@@ -175,6 +175,41 @@ def get_project_ids_for_month(
     return tuple(result) if result else current_project_ids
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_harvest_project_date_range(
+    current_project_ids: tuple[int, ...],
+    account_id: str,
+    access_token: str,
+) -> tuple[datetime.date, datetime.date]:
+    """
+    Return (earliest_start_date, today) across all projects for the given client(s).
+    Used to set the bounds of the month picker in the UI.
+    Falls back to one year ago if no start dates are found.
+    """
+    today = datetime.date.today()
+    earliest = today
+
+    for ref_pid in current_project_ids:
+        try:
+            projects = _get_harvest_client_projects(ref_pid, account_id, access_token)
+            for proj in projects:
+                starts_str = proj.get("starts_on")
+                if starts_str:
+                    try:
+                        starts = datetime.date.fromisoformat(starts_str)
+                        if starts < earliest:
+                            earliest = starts
+                    except ValueError:
+                        pass
+        except Exception:
+            pass
+
+    if earliest == today:
+        earliest = today.replace(year=today.year - 1)
+
+    return earliest, today
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_harvest_data(project_id: int, account_id: str, access_token: str,
                      year: int = None, month: int = None) -> dict:
