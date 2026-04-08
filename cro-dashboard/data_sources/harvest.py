@@ -127,60 +127,65 @@ def get_project_ids_for_month(
     """
     Find the Harvest project IDs for the same client(s) that cover the requested year/month.
 
-    Strategy (in priority order):
-      1. Projects whose starts_on / ends_on date range overlaps the requested month.
-      2. Projects with no dates set but whose name contains the requested year (e.g. "Avis 2025").
-      3. Fall back to current_project_ids if no match found.
+    Strategy:
+      1. If the requested year matches the configured projects' own contract year, return
+         current_project_ids as-is — avoids pulling in sibling projects from the same client
+         that happen to share the same date range (e.g. TSB has multiple projects in 2026).
+      2. For a different year, find projects whose starts_on falls in that year.
+      3. Fall back to name-based year matching if no starts_on dates are set.
+      4. Fall back to current_project_ids if nothing matches.
     """
     today = datetime.date.today()
-    # Current month — no remapping needed
     if year == today.year and month == today.month:
         return current_project_ids
 
-    month_start = datetime.date(year, month, 1)
-    month_end = (
-        datetime.date(year + 1, 1, 1) if month == 12
-        else datetime.date(year, month + 1, 1)
-    ) - datetime.timedelta(days=1)
-
-    date_matches: list[int] = []
-    name_matches: list[int] = []
-    seen: set[int] = set()
+    # Fetch all client projects and determine the year the configured projects belong to
+    all_client_projects: list[dict] = []
+    configured_year: int | None = None
 
     for ref_pid in current_project_ids:
         try:
             projects = _get_harvest_client_projects(ref_pid, account_id, access_token)
         except Exception:
             continue
-
+        if not all_client_projects:
+            all_client_projects = projects
         for proj in projects:
-            pid = proj["id"]
-            if pid in seen:
-                continue
-
-            starts_str = proj.get("starts_on")
-            ends_str = proj.get("ends_on")
-
-            if starts_str or ends_str:
-                # Match by date range
+            if proj["id"] == ref_pid and proj.get("starts_on"):
                 try:
-                    starts = datetime.date.fromisoformat(starts_str) if starts_str else datetime.date.min
+                    proj_year = datetime.date.fromisoformat(proj["starts_on"]).year
+                    if configured_year is None or proj_year > configured_year:
+                        configured_year = proj_year
                 except ValueError:
-                    starts = datetime.date.min
-                try:
-                    ends = datetime.date.fromisoformat(ends_str) if ends_str else datetime.date.max
-                except ValueError:
-                    ends = datetime.date.max
+                    pass
 
-                if starts <= month_end and ends >= month_start:
+    # Requested year matches configured project year — return configured IDs unchanged
+    if configured_year is not None and year == configured_year:
+        return current_project_ids
+
+    # Different year — find projects whose starts_on year matches the requested year
+    date_matches: list[int] = []
+    name_matches: list[int] = []
+    seen: set[int] = set()
+
+    for proj in all_client_projects:
+        pid = proj["id"]
+        if pid in seen:
+            continue
+        starts_str = proj.get("starts_on")
+        if starts_str:
+            try:
+                if datetime.date.fromisoformat(starts_str).year == year:
                     date_matches.append(pid)
                     seen.add(pid)
-            else:
-                # No dates — fall back to year in project name
-                m = re.search(r'\b(20\d{2})\b', proj.get("name", ""))
-                if m and int(m.group(1)) == year:
-                    name_matches.append(pid)
-                    seen.add(pid)
+            except ValueError:
+                pass
+        else:
+            # No dates — fall back to year in project name
+            m = re.search(r'\b(20\d{2})\b', proj.get("name", ""))
+            if m and int(m.group(1)) == year:
+                name_matches.append(pid)
+                seen.add(pid)
 
     result = date_matches or name_matches
     return tuple(result) if result else current_project_ids
