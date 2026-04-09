@@ -277,12 +277,27 @@ def get_trello_win_rate(api_key: str, token: str, board_id: str) -> dict:
 
     all_actions.sort(key=lambda x: x.get("date", ""))
 
+    # Fetch all cards to build a label lookup — one extra call, labels aren't in action events
+    cards_resp = requests.get(
+        f"https://api.trello.com/1/boards/{board_id}/cards",
+        params={"key": api_key, "token": token, "fields": "id,labels"},
+        timeout=30,
+    )
+    cards_resp.raise_for_status()
+    card_labels: dict[str, list[str]] = {
+        c["id"]: [lbl["name"] for lbl in c.get("labels", []) if lbl.get("name")]
+        for c in cards_resp.json()
+    }
+
     _all_tracked = {TRELLO_FULL_LAUNCH_COLUMN} | set(TRELLO_WIN_COLUMNS)
 
     # Track first time each card enters each tracked column to avoid double-counting
     card_counted: dict[str, set] = defaultdict(set)
     monthly_full_launch: dict[str, list] = defaultdict(list)
     monthly_winners: dict[str, list] = defaultdict(list)
+    # label → {concluded, winners} counts
+    by_label_concluded: dict[str, int] = defaultdict(int)
+    by_label_winners: dict[str, int] = defaultdict(int)
 
     for action in all_actions:
         data = action.get("data", {})
@@ -311,12 +326,17 @@ def get_trello_win_rate(api_key: str, token: str, board_id: str) -> dict:
 
         month = dt.strftime("%B")
         card_name = _normalize_card_name(card.get("name", "Unknown"))
+        labels = card_labels.get(cid, []) or ["No Label"]
         card_counted[cid].add(list_name)
 
         if list_name == TRELLO_FULL_LAUNCH_COLUMN:
             monthly_full_launch[month].append(card_name)
+            for lbl in labels:
+                by_label_concluded[lbl] += 1
         elif list_name in TRELLO_WIN_COLUMNS:
             monthly_winners[month].append(card_name)
+            for lbl in labels:
+                by_label_winners[lbl] += 1
 
     # Build month-by-month summary (only months with at least one entry)
     monthly_data = []
@@ -337,6 +357,23 @@ def get_trello_win_rate(api_key: str, token: str, board_id: str) -> dict:
     total_fl = sum(len(v) for v in monthly_full_launch.values())
     total_w = sum(len(v) for v in monthly_winners.values())
 
+    # Build label breakdown sorted by concluded count descending
+    all_labels = sorted(
+        set(by_label_concluded) | set(by_label_winners),
+        key=lambda l: -by_label_concluded.get(l, 0),
+    )
+    by_label = {
+        lbl: {
+            "concluded": by_label_concluded.get(lbl, 0),
+            "winners": by_label_winners.get(lbl, 0),
+            "win_rate": (
+                by_label_winners.get(lbl, 0) / by_label_concluded[lbl] * 100
+                if by_label_concluded.get(lbl, 0) else 0
+            ),
+        }
+        for lbl in all_labels
+    }
+
     return {
         "overall_win_rate": (total_w / total_fl * 100) if total_fl else 0,
         "total_full_launch": total_fl,
@@ -344,4 +381,6 @@ def get_trello_win_rate(api_key: str, token: str, board_id: str) -> dict:
         "monthly_data": monthly_data,
         "monthly_full_launch": dict(monthly_full_launch),
         "monthly_winners": dict(monthly_winners),
+        "concluded_label": "Full Launch",
+        "by_label": by_label,
     }
