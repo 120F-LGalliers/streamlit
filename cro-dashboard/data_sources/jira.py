@@ -424,3 +424,113 @@ def get_jira_transition_times(
             })
 
     return results
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_jira_win_rate(
+    jira_url: str,
+    email: str,
+    api_token: str,
+    win_statuses: tuple,
+    concluded_statuses: tuple,
+    epic: Optional[str] = None,
+    label_filter: Optional[str] = None,
+) -> dict:
+    """
+    Calculate monthly and overall win rate from Jira changelogs.
+    For each ticket, the FIRST time it enters any concluded status determines
+    whether it counts as a win or a loss.
+    Win rate = tickets first reaching a win status ÷ tickets first reaching any concluded status.
+    """
+    auth = HTTPBasicAuth(email, api_token)
+    current_year = datetime.datetime.now().year
+    search_url = f"{jira_url}/rest/api/3/search/jql"
+
+    concluded_set = {s.lower() for s in concluded_statuses}
+    win_set = {s.lower() for s in win_statuses}
+
+    def _fetch(jql: str) -> list[dict]:
+        tickets: list[dict] = []
+        payload: dict = {
+            "jql": jql,
+            "maxResults": 1000,
+            "fields": ["summary", "status", "created"],
+            "expand": "changelog",
+        }
+        while True:
+            resp = requests.post(search_url, auth=auth, json=payload, timeout=30)
+            if resp.status_code != 200:
+                break
+            data = resp.json()
+            tickets.extend(data.get("issues", []))
+            next_token = data.get("nextPageToken")
+            if not next_token or data.get("isLast"):
+                break
+            payload["nextPageToken"] = next_token
+            payload.pop("startAt", None)
+        return tickets
+
+    # Build ticket pool
+    if epic:
+        merged: dict[str, dict] = {}
+        for jql in [
+            f"parentEpic = {epic} AND issuetype = Story AND updated >= {current_year}-01-01",
+            f'"Epic Link" = {epic} AND issuetype = Story AND updated >= {current_year}-01-01',
+        ]:
+            for t in _fetch(jql):
+                merged[t["key"]] = t
+        tickets = list(merged.values())
+    elif label_filter:
+        tickets = _fetch(
+            f'labels = "{label_filter}" AND issuetype = Story AND updated >= {current_year}-01-01'
+        )
+    else:
+        tickets = []
+
+    monthly_concluded: dict[str, list] = defaultdict(list)
+    monthly_winners: dict[str, list] = defaultdict(list)
+
+    for ticket in tickets:
+        key = ticket.get("key", "")
+        summary = ticket.get("fields", {}).get("summary", "")
+        label = f"{key} — {summary}"
+
+        tl = _build_jira_status_timeline(ticket)
+
+        # Find the FIRST time this ticket entered any concluded status this year
+        for dt, status in sorted(tl, key=lambda x: x[0]):
+            if dt.year != current_year:
+                continue
+            if status.lower() in concluded_set:
+                month = dt.strftime("%B")
+                monthly_concluded[month].append(label)
+                if status.lower() in win_set:
+                    monthly_winners[month].append(label)
+                break
+
+    # Build month-by-month summary
+    monthly_data = []
+    for month in MONTHS_ORDER:
+        c = monthly_concluded.get(month, [])
+        w = monthly_winners.get(month, [])
+        if not c and not w:
+            continue
+        monthly_data.append({
+            "month": month[:3],
+            "full_launch": len(c),
+            "winners": len(w),
+            "win_rate": (len(w) / len(c) * 100) if c else 0,
+        })
+
+    total_c = sum(len(v) for v in monthly_concluded.values())
+    total_w = sum(len(v) for v in monthly_winners.values())
+
+    return {
+        "overall_win_rate": (total_w / total_c * 100) if total_c else 0,
+        "total_full_launch": total_c,
+        "total_winners": total_w,
+        "monthly_data": monthly_data,
+        "monthly_full_launch": dict(monthly_concluded),
+        "monthly_winners": dict(monthly_winners),
+        "concluded_label": "Concluded",
+    }
