@@ -1,6 +1,7 @@
 import datetime
 import re
 from collections import defaultdict
+from statistics import mean, median as _median
 
 import requests
 import streamlit as st
@@ -126,3 +127,109 @@ def get_trello_velocity(api_key: str, token: str, board_id: str, target_per_mont
         "all_month_items": all_month_items,
         "status": _velocity_status(current_count, target_per_month),
     }
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_trello_transition_times(
+    api_key: str,
+    token: str,
+    board_id: str,
+    transitions: tuple,
+    start_date: datetime.date,
+    end_date: datetime.date,
+) -> list[dict]:
+    """
+    Calculate average and median days cards spend moving between defined column pairs.
+    Only cards that entered the start column within start_date..end_date are counted.
+    Returns a list of dicts: {from_col, to_col, avg_days, median_days, count}.
+    """
+    since_iso = datetime.datetime(start_date.year, 1, 1).isoformat() + "Z"
+
+    all_actions: list[dict] = []
+    before = None
+
+    while True:
+        params = {
+            "key": api_key,
+            "token": token,
+            "filter": "updateCard:idList",
+            "since": since_iso,
+            "limit": 1000,
+        }
+        if before:
+            params["before"] = before
+
+        resp = requests.get(
+            f"https://api.trello.com/1/boards/{board_id}/actions",
+            params=params,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        actions = resp.json()
+        if not actions:
+            break
+        all_actions.extend(actions)
+        before = actions[-1]["date"]
+
+    # Build per-card timelines: card_id → [(datetime, list_name), ...]
+    card_timelines: dict[str, list] = defaultdict(list)
+
+    all_actions.sort(key=lambda x: x.get("date", ""))
+
+    for action in all_actions:
+        data = action.get("data", {})
+        card = data.get("card", {})
+        list_after = data.get("listAfter", {})
+        date_str = action.get("date")
+
+        if not (card and list_after and date_str):
+            continue
+
+        cid = card.get("id")
+        if not cid:
+            continue
+
+        try:
+            dt = datetime.datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+        except ValueError:
+            continue
+
+        card_timelines[cid].append((dt, list_after.get("name", "")))
+
+    results = []
+    for from_col, to_col in transitions:
+        durations: list[float] = []
+
+        for cid, moves in card_timelines.items():
+            moves_sorted = sorted(moves, key=lambda x: x[0])
+
+            # Use the first time each card entered these columns
+            first_from = next((dt for dt, col in moves_sorted if col == from_col), None)
+            first_to = next((dt for dt, col in moves_sorted if col == to_col), None)
+
+            if (
+                first_from is not None
+                and first_to is not None
+                and first_to > first_from
+                and start_date <= first_from.date() <= end_date
+            ):
+                durations.append((first_to - first_from).total_seconds() / 86400)
+
+        if durations:
+            results.append({
+                "from_col": from_col,
+                "to_col": to_col,
+                "avg_days": mean(durations),
+                "median_days": _median(durations),
+                "count": len(durations),
+            })
+        else:
+            results.append({
+                "from_col": from_col,
+                "to_col": to_col,
+                "avg_days": None,
+                "median_days": None,
+                "count": 0,
+            })
+
+    return results
