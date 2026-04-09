@@ -6,7 +6,7 @@ from statistics import mean, median as _median
 import requests
 import streamlit as st
 
-from config import TRELLO_TARGET_COLUMNS
+from config import TRELLO_TARGET_COLUMNS, TRELLO_FULL_LAUNCH_COLUMN, TRELLO_WIN_COLUMNS
 
 MONTHS_ORDER = [
     "January", "February", "March", "April", "May", "June",
@@ -233,3 +233,115 @@ def get_trello_transition_times(
             })
 
     return results
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_trello_win_rate(api_key: str, token: str, board_id: str) -> dict:
+    """
+    Calculate monthly and overall win rate for TSB.
+
+    Win rate = cards reaching a WIN_COLUMN ÷ cards reaching Full Launch.
+
+    Uses a single paginated board-level actions call rather than one call per
+    card (the original script's approach), cutting API usage from O(n cards)
+    to O(1-2 paginated requests).
+    """
+    current_year = datetime.datetime.utcnow().year
+    since_iso = datetime.datetime(current_year, 1, 1).isoformat() + "Z"
+
+    all_actions: list[dict] = []
+    before = None
+
+    while True:
+        params = {
+            "key": api_key,
+            "token": token,
+            "filter": "updateCard:idList",
+            "since": since_iso,
+            "limit": 1000,
+        }
+        if before:
+            params["before"] = before
+
+        resp = requests.get(
+            f"https://api.trello.com/1/boards/{board_id}/actions",
+            params=params,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        actions = resp.json()
+        if not actions:
+            break
+        all_actions.extend(actions)
+        before = actions[-1]["date"]
+
+    all_actions.sort(key=lambda x: x.get("date", ""))
+
+    _all_tracked = {TRELLO_FULL_LAUNCH_COLUMN} | set(TRELLO_WIN_COLUMNS)
+
+    # Track first time each card enters each tracked column to avoid double-counting
+    card_counted: dict[str, set] = defaultdict(set)
+    monthly_full_launch: dict[str, list] = defaultdict(list)
+    monthly_winners: dict[str, list] = defaultdict(list)
+
+    for action in all_actions:
+        data = action.get("data", {})
+        card = data.get("card", {})
+        list_after = data.get("listAfter", {})
+        date_str = action.get("date")
+
+        if not (card and list_after and date_str):
+            continue
+
+        list_name = list_after.get("name", "")
+        if list_name not in _all_tracked:
+            continue
+
+        cid = card.get("id")
+        if not cid or list_name in card_counted[cid]:
+            continue  # already counted this card for this column
+
+        try:
+            dt = datetime.datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+        except ValueError:
+            continue
+
+        if dt.year != current_year:
+            continue
+
+        month = dt.strftime("%B")
+        card_name = _normalize_card_name(card.get("name", "Unknown"))
+        card_counted[cid].add(list_name)
+
+        if list_name == TRELLO_FULL_LAUNCH_COLUMN:
+            monthly_full_launch[month].append(card_name)
+        elif list_name in TRELLO_WIN_COLUMNS:
+            monthly_winners[month].append(card_name)
+
+    # Build month-by-month summary (only months with at least one entry)
+    monthly_data = []
+    for month in MONTHS_ORDER:
+        fl_cards = monthly_full_launch.get(month, [])
+        w_cards = monthly_winners.get(month, [])
+        if not fl_cards and not w_cards:
+            continue
+        fl_count = len(fl_cards)
+        w_count = len(w_cards)
+        monthly_data.append({
+            "month": month[:3],
+            "full_launch": fl_count,
+            "winners": w_count,
+            "win_rate": (w_count / fl_count * 100) if fl_count else 0,
+        })
+
+    total_fl = sum(len(v) for v in monthly_full_launch.values())
+    total_w = sum(len(v) for v in monthly_winners.values())
+
+    return {
+        "overall_win_rate": (total_w / total_fl * 100) if total_fl else 0,
+        "total_full_launch": total_fl,
+        "total_winners": total_w,
+        "monthly_data": monthly_data,
+        "monthly_full_launch": dict(monthly_full_launch),
+        "monthly_winners": dict(monthly_winners),
+    }
