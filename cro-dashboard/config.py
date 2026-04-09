@@ -118,3 +118,13 @@ MONDAY_TRANSITIONS = [
 MONDAY_TARGET_STATUSES = ["Ready to Publish", "Next Live"]
 MONDAY_ACTIVITY_TYPE_COLUMN_TITLE = "Activity Type"  # exact column title in the Monday board
 MONDAY_AB_TYPE_LABEL = "A/B"                          # exact label text for A/B tests
+MONDAY_WIN_COLUMNS       = ["Always On", "Winners"]
+MONDAY_CONCLUDED_COLUMNS = ["Always On", "Winners", "Done", "Archived", "Losers"]
+
+# Jira — Tesco Mobile win rate
+JIRA_TESCO_WIN_STATUSES       = ["100% Live", "Winners"]
+JIRA_TESCO_CONCLUDED_STATUSES = ["100% Live", "Winners", "Inconclusive", "Losers", "Done"]
+
+# Jira — Avis win rate
+JIRA_AVIS_WIN_STATUSES       = ["Ready for Deployment"]
+JIRA_AVIS_CONCLUDED_STATUSES = ["Ready for Deployment", "Done"]
