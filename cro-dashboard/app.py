@@ -6,9 +6,9 @@ import streamlit as st
 
 import config
 from data_sources.harvest import get_harvest_data, get_combined_harvest_data, get_project_ids_for_month, get_harvest_project_date_range
-from data_sources.jira import get_jira_velocity
+from data_sources.jira import get_jira_velocity, get_jira_transition_times
 from data_sources.monday_com import get_monday_velocity, get_monday_transition_times
-from data_sources.trello import get_trello_velocity, get_trello_transition_times
+from data_sources.trello import get_trello_velocity, get_trello_transition_times, get_trello_win_rate
 
 st.set_page_config(
     page_title="CRO Performance Dashboard",
@@ -441,6 +441,105 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
                     st.divider()
 
 
+def render_win_rate(win_data: dict, client_name: str) -> None:
+    """
+    Display overall win rate metrics and a monthly grouped bar + win-rate line chart.
+    Win rate = cards reaching a win column ÷ cards reaching Full Launch.
+    """
+    total_fl = win_data["total_full_launch"]
+    total_w = win_data["total_winners"]
+    overall = win_data["overall_win_rate"]
+    monthly = win_data["monthly_data"]
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Full Launches (YTD)", total_fl)
+    c2.metric("Winners (YTD)", total_w)
+    c3.metric("Win Rate (YTD)", f"{overall:.0f}%")
+
+    if not monthly:
+        st.caption("No win rate data available for this year yet.")
+        return
+
+    months = [m["month"] for m in monthly]
+    fl_counts = [m["full_launch"] for m in monthly]
+    w_counts = [m["winners"] for m in monthly]
+    win_rates = [m["win_rate"] for m in monthly]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name="Full Launch",
+        x=months,
+        y=fl_counts,
+        marker_color="#475569",
+        opacity=0.75,
+        yaxis="y1",
+    ))
+    fig.add_trace(go.Bar(
+        name="Winners",
+        x=months,
+        y=w_counts,
+        marker_color="#10b981",
+        yaxis="y1",
+    ))
+    fig.add_trace(go.Scatter(
+        name="Win Rate %",
+        x=months,
+        y=win_rates,
+        mode="lines+markers",
+        line=dict(color="#f59e0b", width=2),
+        marker=dict(size=7),
+        yaxis="y2",
+    ))
+    fig.update_layout(
+        height=270,
+        barmode="group",
+        margin=dict(l=0, r=50, t=10, b=0),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        yaxis=dict(title="Cards", gridcolor="#1e293b"),
+        yaxis2=dict(
+            title="Win Rate %",
+            overlaying="y",
+            side="right",
+            range=[0, 110],
+            showgrid=False,
+            ticksuffix="%",
+        ),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="right", x=1, font=dict(size=11)),
+    )
+    st.plotly_chart(fig, use_container_width=True,
+                    key=f"winrate_{client_name}", config={"displayModeBar": False})
+
+    # Monthly detail expanders
+    monthly_fl = win_data.get("monthly_full_launch", {})
+    monthly_w = win_data.get("monthly_winners", {})
+    months_with_data = [m for m in monthly_fl if monthly_fl[m] or monthly_w.get(m)]
+
+    if months_with_data:
+        with st.expander("Monthly breakdown"):
+            for month_full in [m for m in [
+                "January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December",
+            ] if m in monthly_fl or m in monthly_w]:
+                fl_cards = monthly_fl.get(month_full, [])
+                w_cards = monthly_w.get(month_full, [])
+                rate = (len(w_cards) / len(fl_cards) * 100) if fl_cards else 0
+                st.markdown(
+                    f"**{month_full}** — {len(fl_cards)} launched · "
+                    f"{len(w_cards)} won · {rate:.0f}% win rate"
+                )
+                if fl_cards:
+                    st.markdown("&nbsp;&nbsp;*Full Launch:*", unsafe_allow_html=True)
+                    for name in fl_cards:
+                        st.write(f"&nbsp;&nbsp;&nbsp;&nbsp;• {name}")
+                if w_cards:
+                    st.markdown("&nbsp;&nbsp;*Winners:*", unsafe_allow_html=True)
+                    for name in w_cards:
+                        st.write(f"&nbsp;&nbsp;&nbsp;&nbsp;• {name}")
+                st.divider()
+
+
 def render_cycle_time(transition_data: list[dict], client_name: str) -> None:
     """Horizontal bar chart of avg days per pipeline stage transition, with median overlay."""
     active = [t for t in transition_data if t["count"] > 0]
@@ -645,58 +744,97 @@ def main() -> None:
                 else:
                     st.warning("Velocity data unavailable.")
 
-            # Cycle time section — Trello (TSB) and Monday (Dominos) only
+            # Win rate section — TSB (Trello) only
             pm = cfg["pm_tool"]
-            if pm in ("trello", "monday"):
+            if pm == "trello":
                 st.divider()
-                st.subheader("⏱️ Cycle Time")
-                st.caption("Average days cards spend moving between pipeline stages")
-
-                current_q_idx = (datetime.date.today().month - 1) // 3
-                qc1, qc2, _ = st.columns([1, 1, 3])
-                with qc1:
-                    ct_start_q = st.selectbox(
-                        "From quarter",
-                        _QUARTER_OPTS,
-                        index=0,
-                        key=f"ct_start_{client_name}",
+                st.subheader("🏆 Win Rate")
+                st.caption("Cards reaching Winners or Live to 100% vs Full Launch")
+                try:
+                    win_data = get_trello_win_rate(
+                        st.secrets["trello"]["api_key"],
+                        st.secrets["trello"]["token"],
+                        st.secrets["trello"]["board_id"],
                     )
-                with qc2:
-                    ct_end_q = st.selectbox(
-                        "To quarter",
-                        _QUARTER_OPTS,
-                        index=current_q_idx,
-                        key=f"ct_end_{client_name}",
-                    )
+                    render_win_rate(win_data, client_name)
+                except Exception as exc:
+                    st.error(f"Could not load win rate data: {exc}")
 
-                start_q_idx = _QUARTER_OPTS.index(ct_start_q)
-                end_q_idx = _QUARTER_OPTS.index(ct_end_q)
+            # Cycle time section — all clients
+            pm = cfg["pm_tool"]
+            st.divider()
+            st.subheader("⏱️ Cycle Time")
+            st.caption("Average days tickets spend moving between pipeline stages")
 
-                if end_q_idx < start_q_idx:
-                    st.warning("End quarter must be on or after the start quarter.")
-                else:
-                    ct_start_date, ct_end_date = _quarter_date_range(ct_start_q, ct_end_q)
-                    try:
-                        if pm == "trello":
-                            transition_data = get_trello_transition_times(
-                                st.secrets["trello"]["api_key"],
-                                st.secrets["trello"]["token"],
-                                st.secrets["trello"]["board_id"],
-                                tuple(config.TRELLO_TRANSITIONS),
-                                ct_start_date,
-                                ct_end_date,
-                            )
-                        else:  # monday
-                            transition_data = get_monday_transition_times(
-                                st.secrets["monday"]["api_key"],
-                                st.secrets["monday"]["board_id"],
-                                tuple(config.MONDAY_TRANSITIONS),
-                                ct_start_date,
-                                ct_end_date,
-                            )
+            current_q_idx = (datetime.date.today().month - 1) // 3
+            qc1, qc2, _ = st.columns([1, 1, 3])
+            with qc1:
+                ct_start_q = st.selectbox(
+                    "From quarter",
+                    _QUARTER_OPTS,
+                    index=0,
+                    key=f"ct_start_{client_name}",
+                )
+            with qc2:
+                ct_end_q = st.selectbox(
+                    "To quarter",
+                    _QUARTER_OPTS,
+                    index=current_q_idx,
+                    key=f"ct_end_{client_name}",
+                )
+
+            start_q_idx = _QUARTER_OPTS.index(ct_start_q)
+            end_q_idx = _QUARTER_OPTS.index(ct_end_q)
+
+            if end_q_idx < start_q_idx:
+                st.warning("End quarter must be on or after the start quarter.")
+            else:
+                ct_start_date, ct_end_date = _quarter_date_range(ct_start_q, ct_end_q)
+                try:
+                    if pm == "trello":
+                        transition_data = get_trello_transition_times(
+                            st.secrets["trello"]["api_key"],
+                            st.secrets["trello"]["token"],
+                            st.secrets["trello"]["board_id"],
+                            tuple(config.TRELLO_TRANSITIONS),
+                            ct_start_date,
+                            ct_end_date,
+                        )
+                    elif pm == "monday":
+                        transition_data = get_monday_transition_times(
+                            st.secrets["monday"]["api_key"],
+                            st.secrets["monday"]["board_id"],
+                            tuple(config.MONDAY_TRANSITIONS),
+                            ct_start_date,
+                            ct_end_date,
+                        )
+                    elif pm == "jira_tesco":
+                        transition_data = get_jira_transition_times(
+                            jira_url=st.secrets["jira_tesco"]["url"],
+                            email=st.secrets["jira_tesco"]["email"],
+                            api_token=st.secrets["jira_tesco"]["api_token"],
+                            transitions=tuple(config.JIRA_TESCO_TRANSITIONS),
+                            start_date=ct_start_date,
+                            end_date=ct_end_date,
+                            epic=config.JIRA_TESCO_TARGET_EPIC,
+                        )
+                    elif pm == "jira_avis":
+                        transition_data = get_jira_transition_times(
+                            jira_url=st.secrets["jira_avis"]["url"],
+                            email=st.secrets["jira_avis"]["email"],
+                            api_token=st.secrets["jira_avis"]["api_token"],
+                            transitions=tuple(config.JIRA_AVIS_TRANSITIONS),
+                            start_date=ct_start_date,
+                            end_date=ct_end_date,
+                            label_filter=config.JIRA_AVIS_LABEL_FILTER,
+                        )
+                    else:
+                        transition_data = None
+
+                    if transition_data is not None:
                         render_cycle_time(transition_data, client_name)
-                    except Exception as exc:
-                        st.error(f"Could not load cycle time data: {exc}")
+                except Exception as exc:
+                    st.error(f"Could not load cycle time data: {exc}")
 
 
 if __name__ == "__main__":
