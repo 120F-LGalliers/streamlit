@@ -1,6 +1,7 @@
 import datetime
 import json
 from collections import defaultdict
+from statistics import mean, median as _median
 from typing import Optional
 
 import requests
@@ -289,3 +290,118 @@ def get_monday_velocity(api_key: str, board_id: str, target_per_month: int) -> d
         "activity_type_breakdown": activity_type_breakdown,
         "status": _velocity_status(current_ab_count, target_per_month),
     }
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_monday_transition_times(
+    api_key: str,
+    board_id: str,
+    transitions: tuple,
+    start_date: datetime.date,
+    end_date: datetime.date,
+) -> list[dict]:
+    """
+    Calculate average and median days items spend moving between defined status pairs.
+    Only items that entered the start status within start_date..end_date are counted.
+    Returns a list of dicts: {from_col, to_col, avg_days, median_days, count}.
+    """
+    current_year = start_date.year
+
+    # Page through all activity logs for the board
+    activity_logs: list[dict] = []
+    page = 1
+
+    while True:
+        query = f"""
+        {{
+          boards(ids: [{board_id}]) {{
+            activity_logs(limit: 100, page: {page}) {{
+              id
+              created_at
+              data
+            }}
+          }}
+        }}
+        """
+        resp = requests.post(
+            API_URL,
+            json={"query": query},
+            headers={"Authorization": api_key},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        boards = resp.json().get("data", {}).get("boards", [])
+        if not boards:
+            break
+        logs = boards[0].get("activity_logs", [])
+        if not logs:
+            break
+        activity_logs.extend(logs)
+        page += 1
+
+    # Build per-item status timelines: pulse_id → [(datetime, status), ...]
+    card_timelines: dict[str, list] = defaultdict(list)
+
+    for log in activity_logs:
+        raw_data = log.get("data")
+        created_at = log.get("created_at")
+        if not (raw_data and created_at):
+            continue
+
+        try:
+            data = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+        except json.JSONDecodeError:
+            continue
+
+        if data.get("column_id") != "status":
+            continue
+
+        status = data.get("value", {}).get("label", {}).get("text", "")
+        if not status:
+            continue
+
+        dt = _parse_monday_timestamp(created_at)
+        if not dt or dt.year != current_year:
+            continue
+
+        pulse_id = str(data.get("pulse_id", ""))
+        if pulse_id:
+            card_timelines[pulse_id].append((dt, status))
+
+    results = []
+    for from_status, to_status in transitions:
+        durations: list[float] = []
+
+        for pulse_id, moves in card_timelines.items():
+            moves_sorted = sorted(moves, key=lambda x: x[0])
+
+            # Use the first time each item entered these statuses
+            first_from = next((dt for dt, s in moves_sorted if s == from_status), None)
+            first_to = next((dt for dt, s in moves_sorted if s == to_status), None)
+
+            if (
+                first_from is not None
+                and first_to is not None
+                and first_to > first_from
+                and start_date <= first_from.date() <= end_date
+            ):
+                durations.append((first_to - first_from).total_seconds() / 86400)
+
+        if durations:
+            results.append({
+                "from_col": from_status,
+                "to_col": to_status,
+                "avg_days": mean(durations),
+                "median_days": _median(durations),
+                "count": len(durations),
+            })
+        else:
+            results.append({
+                "from_col": from_status,
+                "to_col": to_status,
+                "avg_days": None,
+                "median_days": None,
+                "count": 0,
+            })
+
+    return results
