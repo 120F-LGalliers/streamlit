@@ -6,8 +6,8 @@ import streamlit as st
 
 import config
 from data_sources.harvest import get_harvest_data, get_combined_harvest_data, get_project_ids_for_month, get_harvest_project_date_range
-from data_sources.jira import get_jira_velocity, get_jira_transition_times
-from data_sources.monday_com import get_monday_velocity, get_monday_transition_times
+from data_sources.jira import get_jira_velocity, get_jira_transition_times, get_jira_win_rate
+from data_sources.monday_com import get_monday_velocity, get_monday_transition_times, get_monday_win_rate
 from data_sources.trello import get_trello_velocity, get_trello_transition_times, get_trello_win_rate
 
 st.set_page_config(
@@ -450,9 +450,10 @@ def render_win_rate(win_data: dict, client_name: str) -> None:
     total_w = win_data["total_winners"]
     overall = win_data["overall_win_rate"]
     monthly = win_data["monthly_data"]
+    concluded_label = win_data.get("concluded_label", "Full Launch")
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Full Launches (YTD)", total_fl)
+    c1.metric(f"{concluded_label} (YTD)", total_fl)
     c2.metric("Winners (YTD)", total_w)
     c3.metric("Win Rate (YTD)", f"{overall:.0f}%")
 
@@ -467,7 +468,7 @@ def render_win_rate(win_data: dict, client_name: str) -> None:
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        name="Full Launch",
+        name=concluded_label,
         x=months,
         y=fl_counts,
         marker_color="#475569",
@@ -496,12 +497,16 @@ def render_win_rate(win_data: dict, client_name: str) -> None:
         margin=dict(l=0, r=50, t=10, b=0),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        yaxis=dict(title="Cards", gridcolor="#1e293b"),
+        yaxis=dict(
+            title="Cards",
+            gridcolor="#1e293b",
+            range=[0, max(max(fl_counts, default=1), max(w_counts, default=1)) * 1.3],
+        ),
         yaxis2=dict(
             title="Win Rate %",
             overlaying="y",
             side="right",
-            range=[0, 110],
+            range=[0, 130],
             showgrid=False,
             ticksuffix="%",
         ),
@@ -552,6 +557,8 @@ def render_cycle_time(transition_data: list[dict], client_name: str) -> None:
     median_days = [t["median_days"] for t in active]
     counts = [t["count"] for t in active]
 
+    x_max = max(avg_days) * 1.25 if avg_days else 10  # headroom for inline text
+
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=avg_days,
@@ -560,7 +567,8 @@ def render_cycle_time(transition_data: list[dict], client_name: str) -> None:
         name="Average",
         marker_color="#6366f1",
         text=[f"{d:.1f}d  (n={c})" for d, c in zip(avg_days, counts)],
-        textposition="auto",
+        textposition="inside",
+        insidetextanchor="start",
     ))
     fig.add_trace(go.Scatter(
         x=median_days,
@@ -571,11 +579,11 @@ def render_cycle_time(transition_data: list[dict], client_name: str) -> None:
     ))
     fig.update_layout(
         height=max(180, len(labels) * 44),
-        margin=dict(l=0, r=10, t=10, b=0),
+        margin=dict(l=0, r=20, t=10, b=0),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(title="Days", gridcolor="#1e293b"),
-        yaxis=dict(autorange="reversed"),
+        xaxis=dict(title="Days", gridcolor="#1e293b", range=[0, x_max]),
+        yaxis=dict(autorange="reversed", automargin=True),
         legend=dict(orientation="h", yanchor="bottom", y=1.02,
                     xanchor="right", x=1, font=dict(size=11)),
     )
@@ -744,21 +752,53 @@ def main() -> None:
                 else:
                     st.warning("Velocity data unavailable.")
 
-            # Win rate section — TSB (Trello) only
+            # Win rate section — all clients
             pm = cfg["pm_tool"]
-            if pm == "trello":
-                st.divider()
-                st.subheader("🏆 Win Rate")
-                st.caption("Cards reaching Winners or Live to 100% vs Full Launch")
-                try:
+            st.divider()
+            st.subheader("🏆 Win Rate")
+            try:
+                if pm == "trello":
+                    st.caption("Winners / Live to 100% vs Full Launch")
                     win_data = get_trello_win_rate(
                         st.secrets["trello"]["api_key"],
                         st.secrets["trello"]["token"],
                         st.secrets["trello"]["board_id"],
                     )
+                elif pm == "monday":
+                    st.caption("Always On / Winners vs all concluded tests")
+                    win_data = get_monday_win_rate(
+                        st.secrets["monday"]["api_key"],
+                        st.secrets["monday"]["board_id"],
+                        tuple(config.MONDAY_WIN_COLUMNS),
+                        tuple(config.MONDAY_CONCLUDED_COLUMNS),
+                    )
+                elif pm == "jira_tesco":
+                    st.caption("100% Live / Winners vs all concluded tests")
+                    win_data = get_jira_win_rate(
+                        jira_url=st.secrets["jira_tesco"]["url"],
+                        email=st.secrets["jira_tesco"]["email"],
+                        api_token=st.secrets["jira_tesco"]["api_token"],
+                        win_statuses=tuple(config.JIRA_TESCO_WIN_STATUSES),
+                        concluded_statuses=tuple(config.JIRA_TESCO_CONCLUDED_STATUSES),
+                        epic=config.JIRA_TESCO_TARGET_EPIC,
+                    )
+                elif pm == "jira_avis":
+                    st.caption("Ready for Deployment vs all concluded tests")
+                    win_data = get_jira_win_rate(
+                        jira_url=st.secrets["jira_avis"]["url"],
+                        email=st.secrets["jira_avis"]["email"],
+                        api_token=st.secrets["jira_avis"]["api_token"],
+                        win_statuses=tuple(config.JIRA_AVIS_WIN_STATUSES),
+                        concluded_statuses=tuple(config.JIRA_AVIS_CONCLUDED_STATUSES),
+                        label_filter=config.JIRA_AVIS_LABEL_FILTER,
+                    )
+                else:
+                    win_data = None
+
+                if win_data is not None:
                     render_win_rate(win_data, client_name)
-                except Exception as exc:
-                    st.error(f"Could not load win rate data: {exc}")
+            except Exception as exc:
+                st.error(f"Could not load win rate data: {exc}")
 
             # Cycle time section — all clients
             pm = cfg["pm_tool"]
