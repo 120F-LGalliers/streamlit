@@ -7,8 +7,8 @@ import streamlit as st
 import config
 from data_sources.harvest import get_harvest_data, get_combined_harvest_data, get_project_ids_for_month, get_harvest_project_date_range
 from data_sources.jira import get_jira_velocity
-from data_sources.monday_com import get_monday_velocity
-from data_sources.trello import get_trello_velocity
+from data_sources.monday_com import get_monday_velocity, get_monday_transition_times
+from data_sources.trello import get_trello_velocity, get_trello_transition_times
 
 st.set_page_config(
     page_title="CRO Performance Dashboard",
@@ -38,6 +38,30 @@ BURN_BAR_COLOR = {
     "on_track":     "#f59e0b",
     "underburning": "#10b981",
 }
+
+# Quarter picker — maps label → (start_month, end_month)
+QUARTER_MONTHS = {
+    "Q1 (Jan–Mar)": (1, 3),
+    "Q2 (Apr–Jun)": (4, 6),
+    "Q3 (Jul–Sep)": (7, 9),
+    "Q4 (Oct–Dec)": (10, 12),
+}
+_QUARTER_OPTS = list(QUARTER_MONTHS.keys())
+
+
+def _quarter_date_range(start_q: str, end_q: str) -> tuple:
+    """Return (start_date, end_date) covering the selected quarter range in the current year."""
+    year = datetime.date.today().year
+    start_month = QUARTER_MONTHS[start_q][0]
+    end_month = QUARTER_MONTHS[end_q][1]
+    start_date = datetime.date(year, start_month, 1)
+    # Last day of end_month without importing calendar
+    end_date = (
+        datetime.date(year, end_month + 1, 1) - datetime.timedelta(days=1)
+        if end_month < 12
+        else datetime.date(year, 12, 31)
+    )
+    return start_date, end_date
 
 
 def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
@@ -417,6 +441,53 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
                     st.divider()
 
 
+def render_cycle_time(transition_data: list[dict], client_name: str) -> None:
+    """Horizontal bar chart of avg days per pipeline stage transition, with median overlay."""
+    active = [t for t in transition_data if t["count"] > 0]
+    if not active:
+        st.caption("No cycle time data found for the selected period.")
+        return
+
+    labels = [f"{t['from_col']} → {t['to_col']}" for t in active]
+    avg_days = [t["avg_days"] for t in active]
+    median_days = [t["median_days"] for t in active]
+    counts = [t["count"] for t in active]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=avg_days,
+        y=labels,
+        orientation="h",
+        name="Average",
+        marker_color="#6366f1",
+        text=[f"{d:.1f}d  (n={c})" for d, c in zip(avg_days, counts)],
+        textposition="auto",
+    ))
+    fig.add_trace(go.Scatter(
+        x=median_days,
+        y=labels,
+        mode="markers",
+        name="Median",
+        marker=dict(color="#f59e0b", size=10, symbol="diamond"),
+    ))
+    fig.update_layout(
+        height=max(180, len(labels) * 44),
+        margin=dict(l=0, r=10, t=10, b=0),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(title="Days", gridcolor="#1e293b"),
+        yaxis=dict(autorange="reversed"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="right", x=1, font=dict(size=11)),
+    )
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        key=f"cycle_{client_name}",
+        config={"displayModeBar": False},
+    )
+
+
 def load_client_data(client_name: str, cfg: dict, year: int = None, month: int = None) -> tuple:
     try:
         current_ids = tuple(
@@ -573,6 +644,59 @@ def main() -> None:
                     render_velocity(velocity_data, client_name)
                 else:
                     st.warning("Velocity data unavailable.")
+
+            # Cycle time section — Trello (TSB) and Monday (Dominos) only
+            pm = cfg["pm_tool"]
+            if pm in ("trello", "monday"):
+                st.divider()
+                st.subheader("⏱️ Cycle Time")
+                st.caption("Average days cards spend moving between pipeline stages")
+
+                current_q_idx = (datetime.date.today().month - 1) // 3
+                qc1, qc2, _ = st.columns([1, 1, 3])
+                with qc1:
+                    ct_start_q = st.selectbox(
+                        "From quarter",
+                        _QUARTER_OPTS,
+                        index=0,
+                        key=f"ct_start_{client_name}",
+                    )
+                with qc2:
+                    ct_end_q = st.selectbox(
+                        "To quarter",
+                        _QUARTER_OPTS,
+                        index=current_q_idx,
+                        key=f"ct_end_{client_name}",
+                    )
+
+                start_q_idx = _QUARTER_OPTS.index(ct_start_q)
+                end_q_idx = _QUARTER_OPTS.index(ct_end_q)
+
+                if end_q_idx < start_q_idx:
+                    st.warning("End quarter must be on or after the start quarter.")
+                else:
+                    ct_start_date, ct_end_date = _quarter_date_range(ct_start_q, ct_end_q)
+                    try:
+                        if pm == "trello":
+                            transition_data = get_trello_transition_times(
+                                st.secrets["trello"]["api_key"],
+                                st.secrets["trello"]["token"],
+                                st.secrets["trello"]["board_id"],
+                                tuple(config.TRELLO_TRANSITIONS),
+                                ct_start_date,
+                                ct_end_date,
+                            )
+                        else:  # monday
+                            transition_data = get_monday_transition_times(
+                                st.secrets["monday"]["api_key"],
+                                st.secrets["monday"]["board_id"],
+                                tuple(config.MONDAY_TRANSITIONS),
+                                ct_start_date,
+                                ct_end_date,
+                            )
+                        render_cycle_time(transition_data, client_name)
+                    except Exception as exc:
+                        st.error(f"Could not load cycle time data: {exc}")
 
 
 if __name__ == "__main__":
