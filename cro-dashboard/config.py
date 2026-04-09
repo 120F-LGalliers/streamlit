@@ -22,7 +22,7 @@ CLIENTS = {
     "Avis": {
         "harvest_project_ids": [47029297, 47725794],  # two Harvest projects, combined view
         "pm_tool": "jira_avis",
-        "velocity_target_per_month": 8,
+        "velocity_target_per_month": 2,
         "icon": "🚗",
     },
 }
@@ -33,7 +33,7 @@ TASK_GROUPS = {
     22783286: "Analysis", 22783287: "Analysis", 22783289: "Analysis", 22783288: "Analysis",
     22783264: "QA",       23771418: "QA",
     22782955: "CRO/PM/BA", 22782953: "CRO/PM/BA", 22782952: "CRO/PM/BA",
-    22782954: "CRO/PM/BA", 22782958: "CRO/PM/BA", 18916692: "CRO/PM/BA", 5568020: "CRO/PM/BA",
+    22782954: "CRO/PM/BA", 22782958: "CRO/PM/BA",
     22783265: "Design",
     16091205: "Workshop",
 }
@@ -75,6 +75,24 @@ JIRA_AVIS_LABEL_FILTER  = "120Feet"  # only count stories with this label
 
 # Trello — TSB
 TRELLO_TARGET_COLUMNS = ["Ready to Launch", "Full Launch"]
+
+# Trello — TSB cycle time transitions (ordered pipeline stages)
+TRELLO_TRANSITIONS = [
+    ("Test Plan", "TSB Approval"),
+    ("TSB Approval", "Ready for Estimation"),
+    ("Ready for Estimation", "QA"),
+    ("QA", "Validation"),
+    ("Validation", "Ready to Launch"),
+]
+
+# Monday — Dominos cycle time transitions (ordered pipeline stages)
+MONDAY_TRANSITIONS = [
+    ("Continuous Discovery", "Estimation"),
+    ("Estimation", "Ready to Build"),
+    ("Ready to Build", "Validation/UAT"),
+    ("Validation/UAT", "Ready to Publish"),
+    ("Ready to Publish", "Live"),
+]
 
 # Monday.com — Dominos
 MONDAY_TARGET_STATUSES = ["Ready to Publish", "Next Live"]
