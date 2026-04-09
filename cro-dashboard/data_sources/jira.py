@@ -1,5 +1,6 @@
 import datetime
 from collections import defaultdict
+from statistics import mean, median as _median
 from typing import Optional
 
 import requests
@@ -274,3 +275,152 @@ def get_jira_velocity(
         "all_month_items": all_month_items,
         "status": _velocity_status(current_count, target_per_month),
     }
+
+
+def _build_jira_status_timeline(ticket: dict) -> list[tuple]:
+    """
+    Return a sorted list of (datetime, status_name) tuples representing every
+    time this ticket entered a new status.  The initial status at creation time
+    is inferred from the first changelog entry's fromString.
+    """
+    histories = sorted(
+        ticket.get("changelog", {}).get("histories", []),
+        key=lambda h: (
+            _parse_jira_timestamp(h.get("created", ""))
+            or datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+        ),
+    )
+
+    # Infer initial status from the first status-field change
+    initial_status: Optional[str] = None
+    for entry in histories:
+        for change in entry.get("items", []):
+            if change.get("field") == "status":
+                initial_status = change.get("fromString")
+                break
+        if initial_status:
+            break
+
+    if not initial_status:
+        # No status transitions recorded — use current status
+        initial_status = ticket.get("fields", {}).get("status", {}).get("name", "")
+
+    tl: list[tuple] = []
+
+    # Anchor the initial status at the issue's creation time
+    created_dt = _parse_jira_timestamp(ticket.get("fields", {}).get("created", ""))
+    if created_dt and initial_status:
+        tl.append((created_dt, initial_status))
+
+    # Walk the changelog for every subsequent status transition
+    for entry in histories:
+        change_dt = _parse_jira_timestamp(entry.get("created", ""))
+        if not change_dt:
+            continue
+        for change in entry.get("items", []):
+            if change.get("field") == "status":
+                to_status = change.get("toString", "")
+                if to_status:
+                    tl.append((change_dt, to_status))
+
+    return sorted(tl, key=lambda x: x[0])
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_jira_transition_times(
+    jira_url: str,
+    email: str,
+    api_token: str,
+    transitions: tuple,          # tuple of (from_status, to_status) pairs
+    start_date: datetime.date,
+    end_date: datetime.date,
+    epic: Optional[str] = None,
+    label_filter: Optional[str] = None,
+) -> list[dict]:
+    """
+    Calculate average and median days between defined Jira status transitions.
+    Uses the issue changelog; the initial status is anchored to the creation date.
+    Only tickets where the start status was entered within start_date..end_date are counted.
+    Returns a list of dicts: {from_col, to_col, avg_days, median_days, count}.
+    """
+    auth = HTTPBasicAuth(email, api_token)
+    current_year = start_date.year
+    search_url = f"{jira_url}/rest/api/3/search/jql"
+
+    def _fetch(jql: str) -> list[dict]:
+        tickets: list[dict] = []
+        payload: dict = {
+            "jql": jql,
+            "maxResults": 1000,
+            "fields": ["summary", "status", "created"],
+            "expand": "changelog",
+        }
+        while True:
+            resp = requests.post(search_url, auth=auth, json=payload, timeout=30)
+            if resp.status_code != 200:
+                break
+            data = resp.json()
+            tickets.extend(data.get("issues", []))
+            next_token = data.get("nextPageToken")
+            if not next_token or data.get("isLast"):
+                break
+            payload["nextPageToken"] = next_token
+            payload.pop("startAt", None)
+        return tickets
+
+    # Build ticket pool
+    if epic:
+        merged: dict[str, dict] = {}
+        for jql in [
+            f"parentEpic = {epic} AND issuetype = Story AND updated >= {current_year}-01-01",
+            f'"Epic Link" = {epic} AND issuetype = Story AND updated >= {current_year}-01-01',
+        ]:
+            for t in _fetch(jql):
+                merged[t["key"]] = t
+        tickets = list(merged.values())
+    elif label_filter:
+        tickets = _fetch(
+            f'labels = "{label_filter}" AND issuetype = Story AND updated >= {current_year}-01-01'
+        )
+    else:
+        tickets = []
+
+    results = []
+    for from_status, to_status in transitions:
+        durations: list[float] = []
+        from_lower = from_status.lower()
+        to_lower = to_status.lower()
+
+        for ticket in tickets:
+            tl = _build_jira_status_timeline(ticket)
+
+            # Use first time the ticket entered each status (case-insensitive)
+            first_from = next((dt for dt, s in tl if s.lower() == from_lower), None)
+            first_to = next((dt for dt, s in tl if s.lower() == to_lower), None)
+
+            if (
+                first_from is not None
+                and first_to is not None
+                and first_to > first_from
+                and start_date <= first_from.date() <= end_date
+            ):
+                durations.append((first_to - first_from).total_seconds() / 86400)
+
+        if durations:
+            results.append({
+                "from_col": from_status,
+                "to_col": to_status,
+                "avg_days": mean(durations),
+                "median_days": _median(durations),
+                "count": len(durations),
+            })
+        else:
+            results.append({
+                "from_col": from_status,
+                "to_col": to_status,
+                "avg_days": None,
+                "median_days": None,
+                "count": 0,
+            })
+
+    return results
