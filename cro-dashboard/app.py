@@ -516,6 +516,65 @@ def render_win_rate(win_data: dict, client_name: str) -> None:
     st.plotly_chart(fig, use_container_width=True,
                     key=f"winrate_{client_name}", config={"displayModeBar": False})
 
+    # Label breakdown (TSB only — other clients don't return by_label)
+    by_label = win_data.get("by_label", {})
+    if by_label:
+        st.caption("Win rate by label")
+        label_names = list(by_label.keys())
+        label_concluded = [by_label[l]["concluded"] for l in label_names]
+        label_winners = [by_label[l]["winners"] for l in label_names]
+        label_rates = [by_label[l]["win_rate"] for l in label_names]
+
+        fig_lbl = go.Figure()
+        fig_lbl.add_trace(go.Bar(
+            name=concluded_label,
+            x=label_names,
+            y=label_concluded,
+            marker_color="#475569",
+            opacity=0.75,
+            yaxis="y1",
+        ))
+        fig_lbl.add_trace(go.Bar(
+            name="Winners",
+            x=label_names,
+            y=label_winners,
+            marker_color="#10b981",
+            yaxis="y1",
+        ))
+        fig_lbl.add_trace(go.Scatter(
+            name="Win Rate %",
+            x=label_names,
+            y=label_rates,
+            mode="lines+markers",
+            line=dict(color="#f59e0b", width=2),
+            marker=dict(size=7),
+            yaxis="y2",
+        ))
+        fig_lbl.update_layout(
+            height=240,
+            barmode="group",
+            margin=dict(l=0, r=50, t=10, b=0),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            yaxis=dict(
+                title="Cards",
+                gridcolor="#1e293b",
+                range=[0, max(max(label_concluded, default=1), max(label_winners, default=1)) * 1.3],
+            ),
+            yaxis2=dict(
+                title="Win Rate %",
+                overlaying="y",
+                side="right",
+                range=[0, 130],
+                showgrid=False,
+                ticksuffix="%",
+            ),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                        xanchor="right", x=1, font=dict(size=11)),
+        )
+        st.plotly_chart(fig_lbl, use_container_width=True,
+                        key=f"winrate_label_{client_name}", config={"displayModeBar": False})
+
     # Monthly detail expanders
     monthly_fl = win_data.get("monthly_full_launch", {})
     monthly_w = win_data.get("monthly_winners", {})
