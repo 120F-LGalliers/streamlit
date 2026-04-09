@@ -405,3 +405,123 @@ def get_monday_transition_times(
             })
 
     return results
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_monday_win_rate(
+    api_key: str,
+    board_id: str,
+    win_columns: tuple,
+    concluded_columns: tuple,
+) -> dict:
+    """
+    Calculate monthly and overall win rate for a Monday board.
+    For each item, the FIRST time it enters any concluded column determines
+    whether it counts as a win or a loss.
+    Win rate = items first reaching a win column ÷ items first reaching any concluded column.
+    """
+    current_year = datetime.datetime.now().year
+
+    concluded_set = {s.lower() for s in concluded_columns}
+    win_set = {s.lower() for s in win_columns}
+
+    # Page through activity logs (same pattern as velocity / transition times)
+    activity_logs: list[dict] = []
+    page = 1
+    while True:
+        query = f"""
+        {{
+          boards(ids: [{board_id}]) {{
+            activity_logs(limit: 100, page: {page}) {{
+              id
+              created_at
+              data
+            }}
+          }}
+        }}
+        """
+        resp = requests.post(
+            API_URL,
+            json={"query": query},
+            headers={"Authorization": api_key},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        boards = resp.json().get("data", {}).get("boards", [])
+        if not boards:
+            break
+        logs = boards[0].get("activity_logs", [])
+        if not logs:
+            break
+        activity_logs.extend(logs)
+        page += 1
+
+    # Build per-item status timeline: pulse_id → [(datetime, status), ...]
+    item_timelines: dict[str, list] = defaultdict(list)
+    for log in activity_logs:
+        raw_data = log.get("data")
+        created_at = log.get("created_at")
+        if not (raw_data and created_at):
+            continue
+        try:
+            data = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+        except json.JSONDecodeError:
+            continue
+        if data.get("column_id") != "status":
+            continue
+        status = data.get("value", {}).get("label", {}).get("text", "")
+        if not status:
+            continue
+        dt = _parse_monday_timestamp(created_at)
+        if not dt or dt.year != current_year:
+            continue
+        pulse_id = str(data.get("pulse_id", ""))
+        if pulse_id:
+            item_timelines[pulse_id].append((dt, status))
+
+    # Find each item's FIRST concluded status
+    item_outcomes: dict[str, tuple] = {}  # pulse_id → (month, is_win)
+    for pulse_id, moves in item_timelines.items():
+        for dt, status in sorted(moves, key=lambda x: x[0]):
+            if status.lower() in concluded_set:
+                item_outcomes[pulse_id] = (dt.strftime("%B"), status.lower() in win_set)
+                break
+
+    # Batch-fetch item names
+    relevant_ids = list(item_outcomes.keys())
+    item_data = _batch_fetch_item_data(api_key, relevant_ids, None) if relevant_ids else {}
+
+    monthly_concluded: dict[str, list] = defaultdict(list)
+    monthly_winners: dict[str, list] = defaultdict(list)
+    for pulse_id, (month, is_win) in item_outcomes.items():
+        name = item_data.get(pulse_id, {}).get("name", f"Item {pulse_id}")
+        monthly_concluded[month].append(name)
+        if is_win:
+            monthly_winners[month].append(name)
+
+    # Build month-by-month summary
+    monthly_data = []
+    for month in MONTHS_ORDER:
+        c = monthly_concluded.get(month, [])
+        w = monthly_winners.get(month, [])
+        if not c and not w:
+            continue
+        monthly_data.append({
+            "month": month[:3],
+            "full_launch": len(c),
+            "winners": len(w),
+            "win_rate": (len(w) / len(c) * 100) if c else 0,
+        })
+
+    total_c = sum(len(v) for v in monthly_concluded.values())
+    total_w = sum(len(v) for v in monthly_winners.values())
+
+    return {
+        "overall_win_rate": (total_w / total_c * 100) if total_c else 0,
+        "total_full_launch": total_c,
+        "total_winners": total_w,
+        "monthly_data": monthly_data,
+        "monthly_full_launch": dict(monthly_concluded),
+        "monthly_winners": dict(monthly_winners),
+        "concluded_label": "Concluded",
+    }
