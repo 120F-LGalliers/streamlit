@@ -68,13 +68,33 @@ PROJECT_LABELS = {
 JIRA_TESCO_TARGET_EPIC    = "EAOA-260"
 JIRA_TESCO_TARGET_COLUMNS = ["Ready to Publish", "Run"]  # count tickets reaching either column
 
+# Jira — Tesco Mobile cycle time transitions (ordered pipeline stages)
+JIRA_TESCO_TRANSITIONS = [
+    ("To Do", "Research / Solution"),
+    ("Research / Solution", "Ready for Estimation"),
+    ("Ready for Estimation", "Ready to Build"),
+    ("Ready to Build", "Validation"),
+    ("Validation", "Ready to Publish"),
+    ("Ready to Publish", "Run"),
+]
+
 # Jira — Avis
 JIRA_AVIS_BOARD_ID      = 5025       # agile board ID (not used in current JQL mode)
 JIRA_AVIS_TARGET_COLUMN = "in testing"
 JIRA_AVIS_LABEL_FILTER  = "120Feet"  # only count stories with this label
 
+# Jira — Avis cycle time transitions (ordered pipeline stages)
+JIRA_AVIS_TRANSITIONS = [
+    ("Refinement in progress (migrated)", "Ready for Build (Migrated)"),
+    ("Ready for Build (Migrated)", "In Progress"),
+    ("In Progress", "Blocked"),
+    ("Blocked", "In Testing"),
+]
+
 # Trello — TSB
 TRELLO_TARGET_COLUMNS = ["Ready to Launch", "Full Launch"]
+TRELLO_FULL_LAUNCH_COLUMN = "Full Launch"
+TRELLO_WIN_COLUMNS = ["Winners", "Live to 100% of Traffic (via Target)"]
 
 # Trello — TSB cycle time transitions (ordered pipeline stages)
 TRELLO_TRANSITIONS = [
