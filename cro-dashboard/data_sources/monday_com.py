@@ -63,7 +63,7 @@ def _get_activity_type_column_id(api_key: str, board_id: str, column_title: str)
     return None
 
 
-_MONDAY_ITEM_BATCH_SIZE = 100  # Monday API silently drops IDs beyond this per query
+_MONDAY_ITEM_BATCH_SIZE = 50  # Monday API has a default return limit of 50 items
 
 
 def _batch_fetch_item_data(
@@ -71,7 +71,11 @@ def _batch_fetch_item_data(
     pulse_ids: list[str],
     activity_col_id: Optional[str],
 ) -> dict[str, dict]:
-    """Fetch item names and Activity Type values, chunking IDs to stay within API limits."""
+    """Fetch item names and Activity Type values, chunking IDs to stay within API limits.
+
+    Monday's items query has a default return limit independent of how many IDs are
+    passed — chunks of 50 with an explicit limit avoids silent truncation.
+    """
     if not pulse_ids:
         return {}
 
@@ -79,11 +83,13 @@ def _batch_fetch_item_data(
     result: dict[str, dict] = {}
 
     for i in range(0, len(pulse_ids), _MONDAY_ITEM_BATCH_SIZE):
-        chunk = pulse_ids[i: i + _MONDAY_ITEM_BATCH_SIZE]
+        chunk = [pid for pid in pulse_ids[i: i + _MONDAY_ITEM_BATCH_SIZE] if pid]
+        if not chunk:
+            continue
         ids_str = ", ".join(chunk)
         query = f"""
         {{
-          items(ids: [{ids_str}]) {{
+          items(ids: [{ids_str}], limit: {len(chunk)}) {{
             id
             name
             column_values{col_filter} {{
