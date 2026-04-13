@@ -63,55 +63,59 @@ def _get_activity_type_column_id(api_key: str, board_id: str, column_title: str)
     return None
 
 
+_MONDAY_ITEM_BATCH_SIZE = 100  # Monday API silently drops IDs beyond this per query
+
+
 def _batch_fetch_item_data(
     api_key: str,
     pulse_ids: list[str],
     activity_col_id: Optional[str],
 ) -> dict[str, dict]:
-    """Fetch item names and Activity Type values in one GraphQL request."""
+    """Fetch item names and Activity Type values, chunking IDs to stay within API limits."""
     if not pulse_ids:
         return {}
 
-    ids_str = ", ".join(pulse_ids)
-    # Filter to just the Activity Type column if we know its ID
     col_filter = f'(ids: ["{activity_col_id}"])' if activity_col_id else ""
+    result: dict[str, dict] = {}
 
-    query = f"""
-    {{
-      items(ids: [{ids_str}]) {{
-        id
-        name
-        column_values{col_filter} {{
-          id
-          text
+    for i in range(0, len(pulse_ids), _MONDAY_ITEM_BATCH_SIZE):
+        chunk = pulse_ids[i: i + _MONDAY_ITEM_BATCH_SIZE]
+        ids_str = ", ".join(chunk)
+        query = f"""
+        {{
+          items(ids: [{ids_str}]) {{
+            id
+            name
+            column_values{col_filter} {{
+              id
+              text
+            }}
+          }}
         }}
-      }}
-    }}
-    """
-    try:
-        resp = requests.post(
-            API_URL,
-            json={"query": query},
-            headers={"Authorization": api_key},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        items = resp.json().get("data", {}).get("items", [])
-        result = {}
-        for item in items:
-            activity_type = "Unknown"
-            for cv in item.get("column_values", []):
-                text = cv.get("text", "").strip()
-                if text:
-                    activity_type = text
-                    break
-            result[str(item["id"])] = {
-                "name": item["name"],
-                "activity_type": activity_type,
-            }
-        return result
-    except Exception:
-        return {}
+        """
+        try:
+            resp = requests.post(
+                API_URL,
+                json={"query": query},
+                headers={"Authorization": api_key},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            for item in resp.json().get("data", {}).get("items", []):
+                activity_type = "Unknown"
+                for cv in item.get("column_values", []):
+                    text = cv.get("text", "").strip()
+                    if text:
+                        activity_type = text
+                        break
+                result[str(item["id"])] = {
+                    "name": item["name"],
+                    "activity_type": activity_type,
+                }
+        except Exception:
+            pass  # partial failure — items in this chunk stay as fallback
+
+    return result
 
 
 def _velocity_status(count: int, target: int) -> str:
