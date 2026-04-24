@@ -78,7 +78,63 @@ def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
         st.caption("Complete month — all working days elapsed")
     else:
         st.caption(f"Based on working days — {month_progress:.0f}% of the month has passed")
-    st.progress(month_progress / 100)
+
+    # Dual-bar overview: time elapsed vs budget consumed
+    total_budget = sum(tg["budgeted"] for tg in harvest_data.get("task_groups", []))
+    if total_budget > 0:
+        budget_pct = harvest_data["total_billable"] / total_budget * 100
+        x_max = max(115, budget_pct * 1.08)
+
+        if harvest_data["total_billable"] > total_budget:
+            budget_color = "#ef4444"   # over budget
+        elif budget_pct > month_progress + 5:
+            budget_color = "#f59e0b"   # overburning but not yet over
+        else:
+            budget_color = "#10b981"   # on track or under
+
+        fig_ov = go.Figure()
+        fig_ov.add_trace(go.Bar(
+            x=[month_progress],
+            y=["Time elapsed"],
+            orientation="h",
+            marker_color="#3b82f6",
+            text=f"{month_progress:.0f}%",
+            textposition="inside",
+            insidetextanchor="start",
+            width=0.45,
+        ))
+        fig_ov.add_trace(go.Bar(
+            x=[budget_pct],
+            y=["Budget used"],
+            orientation="h",
+            marker_color=budget_color,
+            text=f"{budget_pct:.0f}%  ·  {harvest_data['total_billable']:.0f}h of {total_budget:.0f}h",
+            textposition="inside",
+            insidetextanchor="start",
+            width=0.45,
+        ))
+        fig_ov.add_vline(
+            x=100,
+            line_dash="dot",
+            line_color="#94a3b8",
+            annotation_text="Budget",
+            annotation_position="top right",
+            annotation_font_size=9,
+        )
+        fig_ov.update_layout(
+            height=90,
+            margin=dict(l=0, r=50, t=16, b=0),
+            xaxis=dict(range=[0, x_max], visible=False),
+            yaxis=dict(visible=True, automargin=True),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            showlegend=False,
+        )
+        st.plotly_chart(fig_ov, use_container_width=True,
+                        key=f"budget_overview_{key_prefix}",
+                        config={"displayModeBar": False})
+    else:
+        st.progress(month_progress / 100)
 
     if not harvest_data["task_groups"]:
         if is_complete:
