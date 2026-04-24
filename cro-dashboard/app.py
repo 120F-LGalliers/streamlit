@@ -157,10 +157,10 @@ def render_hours(harvest_data: dict, key_prefix: str = "") -> None:
             budgeted = tg["budgeted"]
 
             if budgeted > 0:
-                if projected > budgeted * 1.05:
+                if projected > budgeted:
                     proj_color = "#ef4444"
                     proj_icon = "🔴"
-                elif projected < budgeted * 0.95:
+                elif projected >= budgeted * 0.90:
                     proj_color = "#f59e0b"
                     proj_icon = "🟡"
                 else:
