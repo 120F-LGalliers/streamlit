@@ -63,6 +63,7 @@ PROJECT_BUDGETS = {
     46954668: {"Analysis": 26.25, "CRO/PM/BA": 49.275,  "Dev": 63.75,"QA": 22.5},                                 # Dominos
     47029297: {"CRO/PM/BA": 33,   "Dev": 83,            "QA": 50},                                                 # Avis (project 1)
     47725794: {"CRO/PM/BA": 33,   "Dev": 83,            "QA": 50},                                                 # Avis (project 2)
+    47862901: {"CRO/PM/BA": 3,    "Dev": 7,             "QA": 4},                                                  # Ripe Insurance (monthly = quarterly ÷ 3)
 }
 
 # Harvest — human-readable labels for individual project IDs (used in multi-project breakdowns)
