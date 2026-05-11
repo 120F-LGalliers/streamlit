@@ -747,6 +747,14 @@ def load_client_data(client_name: str, cfg: dict, year: int = None, month: int =
                 st.secrets["trello"]["board_id"],
                 cfg["velocity_target_per_month"],
             )
+        elif pm == "trello_ripe":
+            velocity_data = get_trello_velocity(
+                st.secrets["trello"]["api_key"],
+                st.secrets["trello"]["token"],
+                config.RIPE_TRELLO_BOARD_ID,
+                cfg["velocity_target_per_month"],
+                target_columns=tuple(config.RIPE_TRELLO_TARGET_COLUMNS),
+            )
         elif pm == "monday":
             velocity_data = get_monday_velocity(
                 st.secrets["monday"]["api_key"],
@@ -861,7 +869,11 @@ def main() -> None:
 
             with velocity_col:
                 st.subheader("🚀 Experiment Velocity")
-                st.caption(f"Target: {cfg['velocity_target_per_month']} experiments / month")
+                _vel_period = cfg.get("velocity_period", "month")
+                if _vel_period == "quarter":
+                    st.caption(f"Target: {cfg['velocity_target_per_month']} experiment / quarter")
+                else:
+                    st.caption(f"Target: {cfg['velocity_target_per_month']} experiments / month")
                 if velocity_data:
                     render_velocity(velocity_data, client_name)
                 else:
@@ -878,6 +890,17 @@ def main() -> None:
                         st.secrets["trello"]["api_key"],
                         st.secrets["trello"]["token"],
                         st.secrets["trello"]["board_id"],
+                        full_launch_col=config.TRELLO_FULL_LAUNCH_COLUMN,
+                        win_cols=tuple(config.TRELLO_WIN_COLUMNS),
+                    )
+                elif pm == "trello_ripe":
+                    st.caption("Winners vs all concluded tests (Winners / Losers / Inconclusive)")
+                    win_data = get_trello_win_rate(
+                        st.secrets["trello"]["api_key"],
+                        st.secrets["trello"]["token"],
+                        config.RIPE_TRELLO_BOARD_ID,
+                        win_cols=tuple(config.RIPE_TRELLO_WIN_COLUMNS),
+                        concluded_cols=tuple(config.RIPE_TRELLO_CONCLUDED_COLUMNS),
                     )
                 elif pm == "monday":
                     st.caption("Always On / Winners vs all concluded tests")
@@ -952,6 +975,15 @@ def main() -> None:
                             st.secrets["trello"]["token"],
                             st.secrets["trello"]["board_id"],
                             tuple(config.TRELLO_TRANSITIONS),
+                            ct_start_date,
+                            ct_end_date,
+                        )
+                    elif pm == "trello_ripe":
+                        transition_data = get_trello_transition_times(
+                            st.secrets["trello"]["api_key"],
+                            st.secrets["trello"]["token"],
+                            config.RIPE_TRELLO_BOARD_ID,
+                            tuple(config.RIPE_TRELLO_TRANSITIONS),
                             ct_start_date,
                             ct_end_date,
                         )
