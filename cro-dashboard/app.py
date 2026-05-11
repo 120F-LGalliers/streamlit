@@ -287,21 +287,40 @@ _TYPE_COLORS = [
 ]
 
 
-def render_velocity(velocity_data: dict, client_name: str) -> None:
-    current = velocity_data["current_month_count"]
+def render_velocity(velocity_data: dict, client_name: str, velocity_period: str = "month") -> None:
     target = velocity_data["target_per_month"]
     ytd = velocity_data["ytd_count"]
-    ytd_target = velocity_data["ytd_target"]
     month_label = datetime.date.today().strftime("%b")
     current_month_full = datetime.date.today().strftime("%B")
 
     activity_breakdown = velocity_data.get("activity_type_breakdown", {})
     has_breakdown = bool(activity_breakdown)
+    monthly = velocity_data.get("monthly_data", [])
+
+    if velocity_period == "quarter":
+        current_quarter = (datetime.date.today().month - 1) // 3 + 1
+        ytd_target = current_quarter * target
+        period_label = f"Q{current_quarter}"
+
+        # Aggregate monthly data into quarters
+        quarterly_bars = []
+        for q in range(1, current_quarter + 1):
+            q_start = (q - 1) * 3
+            q_count = sum(
+                monthly[i]["count"] for i in range(q_start, q_start + 3) if i < len(monthly)
+            )
+            quarterly_bars.append({"quarter": f"Q{q}", "count": q_count})
+        current = quarterly_bars[-1]["count"] if quarterly_bars else 0
+    else:
+        current = velocity_data["current_month_count"]
+        ytd_target = velocity_data["ytd_target"]
+        period_label = month_label
+        quarterly_bars = []
 
     # Metrics — counts are always A/B only when breakdown is present
     c1, c2 = st.columns(2)
     c1.metric(
-        f"A/B tests ({month_label})" if has_breakdown else f"This month ({month_label})",
+        f"A/B tests ({period_label})" if has_breakdown else f"This {velocity_period} ({period_label})",
         f"{current} / {target}",
         delta=f"{current - target:+d} vs target",
         delta_color="normal",
@@ -313,8 +332,45 @@ def render_velocity(velocity_data: dict, client_name: str) -> None:
         delta_color="normal",
     )
 
-    monthly = velocity_data.get("monthly_data", [])
-    if monthly:
+    if velocity_period == "quarter" and quarterly_bars:
+        # Quarterly bar chart
+        q_labels = [b["quarter"] for b in quarterly_bars]
+        q_counts = [b["count"] for b in quarterly_bars]
+        q_colors = ["#10b981" if c >= target else "#ef4444" for c in q_counts]
+        fig = go.Figure()
+        fig.add_hline(
+            y=target,
+            line_dash="dash",
+            line_color="#94a3b8",
+            annotation_text=f"Target ({target}/quarter)",
+            annotation_position="top right",
+            annotation_font_size=11,
+        )
+        fig.add_trace(go.Bar(
+            x=q_labels,
+            y=q_counts,
+            marker_color=q_colors,
+            text=q_counts,
+            textposition="outside",
+        ))
+        fig.update_layout(
+            height=270,
+            showlegend=False,
+            margin=dict(l=0, r=50, t=10, b=0),
+            yaxis=dict(
+                title="Experiments",
+                gridcolor="#1e293b",
+                range=[0, max(max(q_counts, default=0), target) * 1.4],
+                dtick=1,
+            ),
+            xaxis=dict(title=""),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig, use_container_width=True,
+                        key=f"vel_{client_name}", config={"displayModeBar": False})
+
+    elif monthly:
         df = pd.DataFrame(monthly)
         ab_counts = df["count"].tolist()
         ab_colors = ["#10b981" if c >= target else "#ef4444" for c in ab_counts]
@@ -880,7 +936,8 @@ def main() -> None:
                 else:
                     st.caption(f"Target: {cfg['velocity_target_per_month']} experiments / month")
                 if velocity_data:
-                    render_velocity(velocity_data, client_name)
+                    render_velocity(velocity_data, client_name,
+                                    velocity_period=cfg.get("velocity_period", "month"))
                 else:
                     st.warning("Velocity data unavailable.")
 
