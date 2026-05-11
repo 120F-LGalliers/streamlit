@@ -6,7 +6,7 @@ from statistics import mean, median as _median
 import requests
 import streamlit as st
 
-from config import TRELLO_TARGET_COLUMNS, TRELLO_FULL_LAUNCH_COLUMN, TRELLO_WIN_COLUMNS
+from config import TRELLO_TARGET_COLUMNS, TRELLO_FULL_LAUNCH_COLUMN, TRELLO_WIN_COLUMNS, RIPE_TRELLO_CONCLUDED_COLUMNS
 
 MONTHS_ORDER = [
     "January", "February", "March", "April", "May", "June",
@@ -30,11 +30,14 @@ def _velocity_status(count: int, target: int) -> str:
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def get_trello_velocity(api_key: str, token: str, board_id: str, target_per_month: int) -> dict:
+def get_trello_velocity(api_key: str, token: str, board_id: str, target_per_month: int, target_columns: tuple = None) -> dict:
     """
     Fetch all board actions for the current year and identify cards that
     moved into any of TRELLO_TARGET_COLUMNS.  Returns structured velocity data.
     """
+    if target_columns is None:
+        target_columns = tuple(TRELLO_TARGET_COLUMNS)
+
     current_year = datetime.datetime.utcnow().year
     current_month = datetime.datetime.utcnow().strftime("%B")
     current_month_idx = datetime.datetime.utcnow().month
@@ -83,7 +86,7 @@ def get_trello_velocity(api_key: str, token: str, board_id: str, target_per_mont
             continue
 
         list_name = list_after.get("name", "")
-        if list_name not in TRELLO_TARGET_COLUMNS:
+        if list_name not in target_columns:
             continue
 
         try:
@@ -236,16 +239,37 @@ def get_trello_transition_times(
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def get_trello_win_rate(api_key: str, token: str, board_id: str) -> dict:
+def get_trello_win_rate(
+    api_key: str,
+    token: str,
+    board_id: str,
+    full_launch_col: str = None,
+    win_cols: tuple = None,
+    concluded_cols: tuple = None,
+) -> dict:
     """
-    Calculate monthly and overall win rate for TSB.
+    Calculate monthly and overall win rate for a Trello board.
 
-    Win rate = cards reaching a WIN_COLUMN ÷ cards reaching Full Launch.
+    Two modes:
+    - Full-launch mode (TSB):  pass full_launch_col + win_cols.
+      denominator = cards reaching full_launch_col
+      numerator   = cards reaching any win_cols (independent events)
+      Labels breakdown is included.
 
-    Uses a single paginated board-level actions call rather than one call per
-    card (the original script's approach), cutting API usage from O(n cards)
-    to O(1-2 paginated requests).
+    - First-concluded mode (Ripe):  pass concluded_cols + win_cols.
+      denominator = first outcome column a card hits (any of concluded_cols)
+      numerator   = cards whose first outcome is in win_cols
+      No labels breakdown.
+
+    Defaults fall back to TSB constants so existing callers need no changes.
     """
+    if full_launch_col is None and concluded_cols is None:
+        # backwards-compat defaults → TSB mode
+        full_launch_col = TRELLO_FULL_LAUNCH_COLUMN
+        win_cols = tuple(TRELLO_WIN_COLUMNS)
+
+    use_concluded_mode = concluded_cols is not None
+
     current_year = datetime.datetime.utcnow().year
     since_iso = datetime.datetime(current_year, 1, 1).isoformat() + "Z"
 
@@ -277,25 +301,32 @@ def get_trello_win_rate(api_key: str, token: str, board_id: str) -> dict:
 
     all_actions.sort(key=lambda x: x.get("date", ""))
 
-    # Fetch all cards to build a label lookup — one extra call, labels aren't in action events
-    cards_resp = requests.get(
-        f"https://api.trello.com/1/boards/{board_id}/cards",
-        params={"key": api_key, "token": token, "fields": "id,labels"},
-        timeout=30,
-    )
-    cards_resp.raise_for_status()
-    card_labels: dict[str, list[str]] = {
-        c["id"]: [lbl["name"] for lbl in c.get("labels", []) if lbl.get("name")]
-        for c in cards_resp.json()
-    }
+    # Fetch card labels (only needed for full-launch / label-breakdown mode)
+    card_labels: dict[str, list[str]] = {}
+    if not use_concluded_mode:
+        cards_resp = requests.get(
+            f"https://api.trello.com/1/boards/{board_id}/cards",
+            params={"key": api_key, "token": token, "fields": "id,labels"},
+            timeout=30,
+        )
+        cards_resp.raise_for_status()
+        card_labels = {
+            c["id"]: [lbl["name"] for lbl in c.get("labels", []) if lbl.get("name")]
+            for c in cards_resp.json()
+        }
 
-    _all_tracked = {TRELLO_FULL_LAUNCH_COLUMN} | set(TRELLO_WIN_COLUMNS)
+    if use_concluded_mode:
+        _all_tracked = set(concluded_cols)
+    else:
+        _all_tracked = {full_launch_col} | set(win_cols)
 
-    # Track first time each card enters each tracked column to avoid double-counting
-    card_counted: dict[str, set] = defaultdict(set)
+    # Track first time each card enters each tracked column to avoid double-counting.
+    # In concluded mode we use a flat set; in full-launch mode a dict of sets (per column).
+    card_concluded: set = set()            # concluded mode: cards already counted
+    card_counted: dict[str, set] = defaultdict(set)  # full-launch mode: per-column tracking
+
     monthly_full_launch: dict[str, list] = defaultdict(list)
     monthly_winners: dict[str, list] = defaultdict(list)
-    # label → {concluded, winners} counts
     by_label_concluded: dict[str, int] = defaultdict(int)
     by_label_winners: dict[str, int] = defaultdict(int)
 
@@ -313,8 +344,8 @@ def get_trello_win_rate(api_key: str, token: str, board_id: str) -> dict:
             continue
 
         cid = card.get("id")
-        if not cid or list_name in card_counted[cid]:
-            continue  # already counted this card for this column
+        if not cid:
+            continue
 
         try:
             dt = datetime.datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S.%fZ")
@@ -326,17 +357,31 @@ def get_trello_win_rate(api_key: str, token: str, board_id: str) -> dict:
 
         month = dt.strftime("%B")
         card_name = _normalize_card_name(card.get("name", "Unknown"))
-        labels = card_labels.get(cid, []) or ["No Label"]
-        card_counted[cid].add(list_name)
 
-        if list_name == TRELLO_FULL_LAUNCH_COLUMN:
-            monthly_full_launch[month].append(card_name)
-            for lbl in labels:
-                by_label_concluded[lbl] += 1
-        elif list_name in TRELLO_WIN_COLUMNS:
-            monthly_winners[month].append(card_name)
-            for lbl in labels:
-                by_label_winners[lbl] += 1
+        if use_concluded_mode:
+            # First outcome wins — skip if card already concluded
+            if cid in card_concluded:
+                continue
+            card_concluded.add(cid)
+            monthly_full_launch[month].append(card_name)   # all concluded = denominator
+            if list_name in win_cols:
+                monthly_winners[month].append(card_name)
+
+        else:
+            # Full-launch mode — full_launch and winners are independent events
+            if list_name in card_counted[cid]:
+                continue  # already counted this card for this specific column
+            labels = card_labels.get(cid, []) or ["No Label"]
+            card_counted[cid].add(list_name)
+
+            if list_name == full_launch_col:
+                monthly_full_launch[month].append(card_name)
+                for lbl in labels:
+                    by_label_concluded[lbl] += 1
+            elif list_name in win_cols:
+                monthly_winners[month].append(card_name)
+                for lbl in labels:
+                    by_label_winners[lbl] += 1
 
     # Build month-by-month summary (only months with at least one entry)
     monthly_data = []
@@ -357,30 +402,32 @@ def get_trello_win_rate(api_key: str, token: str, board_id: str) -> dict:
     total_fl = sum(len(v) for v in monthly_full_launch.values())
     total_w = sum(len(v) for v in monthly_winners.values())
 
-    # Build label breakdown sorted by concluded count descending
-    all_labels = sorted(
-        set(by_label_concluded) | set(by_label_winners),
-        key=lambda l: -by_label_concluded.get(l, 0),
-    )
-    by_label = {
-        lbl: {
-            "concluded": by_label_concluded.get(lbl, 0),
-            "winners": by_label_winners.get(lbl, 0),
-            "win_rate": (
-                by_label_winners.get(lbl, 0) / by_label_concluded[lbl] * 100
-                if by_label_concluded.get(lbl, 0) else 0
-            ),
-        }
-        for lbl in all_labels
-    }
-
-    return {
+    result = {
         "overall_win_rate": (total_w / total_fl * 100) if total_fl else 0,
         "total_full_launch": total_fl,
         "total_winners": total_w,
         "monthly_data": monthly_data,
         "monthly_full_launch": dict(monthly_full_launch),
         "monthly_winners": dict(monthly_winners),
-        "concluded_label": "Full Launch",
-        "by_label": by_label,
+        "concluded_label": "Concluded" if use_concluded_mode else "Full Launch",
     }
+
+    # Label breakdown only in full-launch mode
+    if not use_concluded_mode:
+        all_labels = sorted(
+            set(by_label_concluded) | set(by_label_winners),
+            key=lambda l: -by_label_concluded.get(l, 0),
+        )
+        result["by_label"] = {
+            lbl: {
+                "concluded": by_label_concluded.get(lbl, 0),
+                "winners": by_label_winners.get(lbl, 0),
+                "win_rate": (
+                    by_label_winners.get(lbl, 0) / by_label_concluded[lbl] * 100
+                    if by_label_concluded.get(lbl, 0) else 0
+                ),
+            }
+            for lbl in all_labels
+        }
+
+    return result
