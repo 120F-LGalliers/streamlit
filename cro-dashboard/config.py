@@ -22,8 +22,15 @@ CLIENTS = {
     "Avis": {
         "harvest_project_ids": [47029297, 47725794],  # two Harvest projects, combined view
         "pm_tool": "jira_avis",
-        "velocity_target_per_month": 8,
+        "velocity_target_per_month": 2,
         "icon": "🚗",
+    },
+    "Ripe Insurance": {
+        "harvest_project_id": 47862901,
+        "pm_tool": "trello_ripe",
+        "velocity_target_per_month": 1,
+        "velocity_period": "quarter",
+        "icon": "🛡️",
     },
 }
 
@@ -128,3 +135,15 @@ JIRA_TESCO_CONCLUDED_STATUSES = ["100% Live", "Winners", "Inconclusive", "Losers
 # Jira — Avis win rate
 JIRA_AVIS_WIN_STATUSES       = ["Ready for Deployment"]
 JIRA_AVIS_CONCLUDED_STATUSES = ["Ready for Deployment", "Done"]
+
+# Trello — Ripe Insurance
+RIPE_TRELLO_BOARD_ID         = "PkATiCpH"
+RIPE_TRELLO_TARGET_COLUMNS   = ["Next Live", "Live"]
+RIPE_TRELLO_WIN_COLUMNS      = ["Winners"]
+RIPE_TRELLO_CONCLUDED_COLUMNS = ["Winners", "Losers", "Inconclusive"]
+RIPE_TRELLO_TRANSITIONS      = [
+    ("Continuous Discovery", "Ready to Build"),
+    ("Ready to Build", "Validation"),
+    ("Validation", "Next Live"),
+    ("Validation", "Live"),
+]
