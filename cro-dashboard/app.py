@@ -522,6 +522,8 @@ def render_win_rate(win_data: dict, client_name: str) -> None:
     w_counts = [m["winners"] for m in monthly]
     win_rates = [m["win_rate"] for m in monthly]
 
+    monthly_rate_ceil = max(110, max(win_rates, default=0) * 1.15)
+
     fig = go.Figure()
     fig.add_trace(go.Bar(
         name=concluded_label,
@@ -562,7 +564,7 @@ def render_win_rate(win_data: dict, client_name: str) -> None:
             title="Win Rate %",
             overlaying="y",
             side="right",
-            range=[0, 130],
+            range=[0, monthly_rate_ceil],
             showgrid=False,
             ticksuffix="%",
         ),
@@ -580,6 +582,9 @@ def render_win_rate(win_data: dict, client_name: str) -> None:
         label_concluded = [by_label[l]["concluded"] for l in label_names]
         label_winners = [by_label[l]["winners"] for l in label_names]
         label_rates = [by_label[l]["win_rate"] for l in label_names]
+
+        # y2 range must accommodate actual rates (can exceed 100% when cards skipped Full Launch)
+        lbl_rate_ceil = max(110, max(label_rates, default=0) * 1.15)
 
         fig_lbl = go.Figure()
         fig_lbl.add_trace(go.Bar(
@@ -621,7 +626,7 @@ def render_win_rate(win_data: dict, client_name: str) -> None:
                 title="Win Rate %",
                 overlaying="y",
                 side="right",
-                range=[0, 130],
+                range=[0, lbl_rate_ceil],
                 showgrid=False,
                 ticksuffix="%",
             ),
