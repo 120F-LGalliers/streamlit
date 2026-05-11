@@ -431,7 +431,7 @@ def render_velocity(velocity_data: dict, client_name: str, velocity_period: str 
             height=270,
             margin=dict(l=0, r=50, t=10, b=0),
             yaxis=dict(
-                title="Items completed",
+                title="Experiments",
                 gridcolor="#1e293b",
                 range=y_range,
             ),
